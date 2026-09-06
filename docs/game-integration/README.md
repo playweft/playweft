@@ -118,7 +118,10 @@ Key rules:
 - Presence of `modes.solo` or `modes.room` determines where the game may run.
 - `persistence: "durable"` persists authoritative state after each accepted
   action and permits Durable Object hibernation. `"live"` keeps active state in
-  memory and routes actions over the room WebSocket.
+  memory and routes actions over the room WebSocket. Live room activity timestamps
+  are coalesced to storage at most once per second during continued activity;
+  membership, configuration and lifecycle changes are persisted immediately.
+  A runtime reset can lose the live match and up to one second of activity timestamps.
 - Protected features are requested at runtime and are not declared in the
   Manifest. The platform exposes only capabilities supported by the current
   mode.

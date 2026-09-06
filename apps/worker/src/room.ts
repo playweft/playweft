@@ -36,6 +36,7 @@ const MAX_SERVER_SOURCE_BYTES = 1024 * 1024;
 const SERVER_FETCH_TIMEOUT_MS = 8_000;
 const ROOM_IDLE_TTL_MS = 60 * 60 * 1_000;
 const HOST_OFFLINE_TIMEOUT_MS = 45_000;
+const LIVE_ACTIVITY_FLUSH_MS = 1_000;
 const MAX_PLAYERS = 32;
 const GAME_PROTOCOL_VERSION = 1;
 const MAX_PENDING_TIMERS = 32;
@@ -165,6 +166,8 @@ export class GameRoom extends DurableObject<Env> {
     engine: GameRuntime;
   };
   private liveRoomState?: RoomState;
+  private liveMeta?: RoomMeta;
+  private liveMetaSavedAt = 0;
   private liveSockets = new Set<WebSocket>();
   private liveSocketAttachments = new Map<WebSocket, SocketAttachment>();
   private tail: Promise<void> = Promise.resolve();
@@ -246,6 +249,10 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    await this.enqueue(() => this.handleAlarm());
+  }
+
+  private async handleAlarm(): Promise<void> {
     let meta: RoomMeta;
     try {
       meta = await this.meta();
@@ -266,6 +273,8 @@ export class GameRoom extends DurableObject<Env> {
     const hasTimers = await this.hasPendingTimers();
     if (!hasTimers && Date.now() >= expiresAt) {
       this.disposeRuntime();
+      this.liveRoomState = undefined;
+      this.liveMeta = undefined;
       await this.ctx.storage.deleteAll();
       return;
     }
@@ -384,6 +393,7 @@ export class GameRoom extends DurableObject<Env> {
 
     this.disposeRuntime();
     this.liveRoomState = undefined;
+    this.liveMeta = undefined;
     const meta = await this.meta();
     for (const member of Object.values(meta.members)) {
       delete member.avatarUrl;
@@ -724,6 +734,7 @@ export class GameRoom extends DurableObject<Env> {
     });
     this.closeRoomSockets(4004, "room dissolved");
     this.liveRoomState = undefined;
+    this.liveMeta = undefined;
     await this.ctx.storage.deleteAll();
     return { dissolved: true };
   }
@@ -1476,20 +1487,34 @@ export class GameRoom extends DurableObject<Env> {
     const roomConfig = config ?? (await this.config());
     if (roomConfig.liveRoom) {
       this.liveRoomState = undefined;
+      this.liveMeta = undefined;
       return;
     }
     await this.ctx.storage.delete("gameState");
   }
 
   private async meta(): Promise<RoomMeta> {
+    // All room mutations are serialized; return a copy so callers cannot mutate the cache.
+    if (this.liveMeta) return structuredClone(this.liveMeta);
     const stored = await this.ctx.storage.get<RoomMeta>("roomMeta");
     if (stored === undefined)
       throw new RoomHttpError(404, "room does not exist");
+    if (stored.config?.liveRoom) this.liveMeta = structuredClone(stored);
     return stored;
   }
 
   private async saveMeta(meta: RoomMeta): Promise<void> {
     await this.ctx.storage.put("roomMeta", meta);
+    this.liveMeta = meta.config?.liveRoom ? structuredClone(meta) : undefined;
+    this.liveMetaSavedAt = Date.now();
+  }
+
+  private async saveActivity(meta: RoomMeta): Promise<void> {
+    if (!meta.config?.liveRoom) return this.saveMeta(meta);
+    this.liveMeta = structuredClone(meta);
+    // Only activity timestamps may be delayed. Membership/config/lifecycle still use saveMeta.
+    // A reset can lose at most one second of presence; the live match itself is non-durable.
+    if (Date.now() - this.liveMetaSavedAt >= LIVE_ACTIVITY_FLUSH_MS) await this.saveMeta(meta);
   }
 
   private async saveMembers(
@@ -1567,6 +1592,7 @@ export class GameRoom extends DurableObject<Env> {
     this.closeRoomSockets(4004, "room empty");
     this.disposeRuntime();
     this.liveRoomState = undefined;
+    this.liveMeta = undefined;
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
   }
@@ -1600,16 +1626,16 @@ export class GameRoom extends DurableObject<Env> {
     const now = Date.now();
     const meta = await this.meta();
     meta.lastActivity = now;
-    await this.saveMeta(meta);
+    await this.saveActivity(meta);
     await this.transferOfflineHost();
-    await this.scheduleAlarm(now + ROOM_IDLE_TTL_MS);
+    await this.scheduleAlarm(now + ROOM_IDLE_TTL_MS, undefined, meta.config?.liveRoom === true);
   }
 
   private async recordOwnerSeen(seenAt: number): Promise<void> {
     const meta = await this.meta();
     if (seenAt <= (meta.ownerLastSeenAt ?? 0)) return;
     meta.ownerLastSeenAt = seenAt;
-    await this.saveMeta(meta);
+    await this.saveActivity(meta);
   }
 
   private async noteSocketSeen(

@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "postinstall": "patch-package",
-    "check": "npm run check --workspace @playweft/worker && npm run build:web",
+    "test:live-activity": "node --test tests/live-activity.test.mjs",
+    "check": "npm run test:live-activity && npm run check --workspace @playweft/worker && npm run build:web",
     "dev:worker": "npm run dev --workspace @playweft/worker --",
     "dev:web": "npm run dev --workspace @playweft/web",
     "dev:rps": "npm run dev --workspace @playweft/rps-demo",

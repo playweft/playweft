@@ -918,6 +918,40 @@ main.room-host {
   text-align: center;
 }
 
+.game-orientation-wechat {
+  padding: max(20px, env(safe-area-inset-top)) 20px
+    max(28px, env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+}
+
+.wechat-browser-guidance {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  right: 16px;
+  display: grid;
+  justify-items: end;
+  text-align: right;
+}
+
+.wechat-browser-guidance svg {
+  width: 92px;
+  height: 92px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.25;
+}
+
+.wechat-browser-guidance p {
+  display: grid;
+  gap: 4px;
+  margin: -6px 0 0;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+
 .game-orientation-unsupported-content {
   display: grid;
   place-items: center;
@@ -1334,6 +1368,7 @@ main.room-host {
   line-height: 1.45;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+  line-clamp: 3;
 }
 
 @keyframes game-info-backdrop-in {

@@ -73,6 +73,7 @@ export default function SoloHost({
   }, [currentGame.manifestId]);
 
   useEffect(() => {
+    if (gameViewport.deferGameLoad) return;
     let cancelled = false;
     void loadGameManifest(game.manifestUrl)
       .then((result) => {
@@ -86,7 +87,7 @@ export default function SoloHost({
     return () => {
       cancelled = true;
     };
-  }, [game.manifestUrl, t]);
+  }, [game.manifestUrl, gameViewport.deferGameLoad, t]);
 
   useEffect(() => {
     document.title = `${gameName} | Playweft`;
@@ -102,7 +103,7 @@ export default function SoloHost({
   }, [closing]);
 
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || gameViewport.deferGameLoad) return;
     const capabilities = [
       ...new Set([
         ...PLATFORM_WINDOW_CAPABILITIES,
@@ -188,6 +189,7 @@ export default function SoloHost({
     clipboard.cancelPending,
     clipboard.requestReadText,
     gameOrigin,
+    gameViewport.deferGameLoad,
     loaded,
     userProfile.cancelPending,
     userProfile.requestProfile,
@@ -204,6 +206,7 @@ export default function SoloHost({
         infoExpanded={gameInfoOpen}
         onOpenInfo={() => setGameInfoOpen(true)}
         orientationAction={gameViewport.orientationAction}
+        showOptions={!gameViewport.deferGameLoad}
         onEnterPreferredOrientation={() =>
           void gameViewport.enterPreferredOrientation()
         }
@@ -216,7 +219,7 @@ export default function SoloHost({
           gameViewport.landscapeCompatibilityRotation
         }
       >
-        {!frameReady && !loadError && (
+        {!gameViewport.deferGameLoad && !frameReady && !loadError && (
           <div
             className="solo-loading"
             role="status"
@@ -243,7 +246,7 @@ export default function SoloHost({
             </div>
           </div>
         )}
-        {loaded && (
+        {loaded && !gameViewport.deferGameLoad && (
           <div
             className={`solo-game-surface ${frameReady ? "solo-game-surface-ready" : ""}`}
           >

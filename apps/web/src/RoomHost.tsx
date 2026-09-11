@@ -78,6 +78,7 @@ import { localizeGameDescription, localizeGameName, useI18n } from "./i18n";
 import {
   prepareGameOrientation,
   releaseGameFullscreen,
+  shouldShowWeChatLandscapeGuidance,
   useGameViewport,
 } from "./use-game-viewport";
 
@@ -182,7 +183,13 @@ export default function RoomHost({
   // but does not need to do so for the room to exist.
   const showPlatformRoom = phase === "lobby";
   const showGameFrame = phase === "playing";
-  const gameViewport = useGameViewport(showGameFrame, loadedGame?.game);
+  const weChatLandscapeGuidance = shouldShowWeChatLandscapeGuidance(
+    loadedGame?.game.orientation,
+  );
+  const gameViewport = useGameViewport(
+    showGameFrame || weChatLandscapeGuidance,
+    loadedGame?.game,
+  );
   const isOwner = Boolean(selfId && lobby?.ownerId === selfId);
   const selfPlayer = lobby?.players.find((player) => player.id === selfId);
   const isSpectating = Boolean(selfId && lobby && !selfPlayer);
@@ -380,7 +387,7 @@ export default function RoomHost({
   }, [manifestUrl, onGameDiscovered]);
 
   useEffect(() => {
-    if (!gameUrl || !loadedGame?.room) return;
+    if (!gameUrl || !loadedGame?.room || gameViewport.deferGameLoad) return;
     const roomConfiguration = loadedGame.room;
     let socket: WebSocket | undefined;
     let heartbeatTimer: number | undefined;
@@ -907,6 +914,7 @@ export default function RoomHost({
     };
   }, [
     gameUrl,
+    gameViewport.deferGameLoad,
     loadedGame,
     onGameDiscovered,
     roomId,
@@ -1087,6 +1095,30 @@ export default function RoomHost({
 
   if (entryFailure) {
     return <RoomEntryFailureState failure={entryFailure} onBack={onBack} />;
+  }
+
+  if (gameViewport.deferGameLoad) {
+    return (
+      <GameViewport
+        infoExpanded={false}
+        onOpenInfo={() => undefined}
+        orientationAction={gameViewport.orientationAction}
+        onEnterPreferredOrientation={() =>
+          void gameViewport.enterPreferredOrientation()
+        }
+        onEnableLandscapeCompatibility={
+          gameViewport.showLandscapeCompatibility
+            ? gameViewport.enableLandscapeCompatibility
+            : undefined
+        }
+        landscapeCompatibilityRotation={
+          gameViewport.landscapeCompatibilityRotation
+        }
+        showOptions={false}
+      >
+        {null}
+      </GameViewport>
+    );
   }
 
   if (!lobby || !selfId) {
@@ -1383,6 +1415,7 @@ export default function RoomHost({
           infoExpanded={gameInfoOpen}
           onOpenInfo={() => setGameInfoOpen(true)}
           orientationAction={gameViewport.orientationAction}
+          showOptions={phase === "playing" && !gameViewport.deferGameLoad}
           onEnterPreferredOrientation={() =>
             void gameViewport.enterPreferredOrientation()
           }
@@ -1394,9 +1427,8 @@ export default function RoomHost({
           landscapeCompatibilityRotation={
             gameViewport.landscapeCompatibilityRotation
           }
-          showOptions={phase === "playing"}
         >
-          {phase === "playing" && gameUrl && (
+          {phase === "playing" && gameUrl && !gameViewport.deferGameLoad && (
             <GameFrame
               key={gameRevision}
               ref={iframe}

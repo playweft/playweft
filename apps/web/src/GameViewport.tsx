@@ -21,7 +21,7 @@ export default function GameViewport({
   children: ReactNode;
   infoExpanded: boolean;
   onOpenInfo(): void;
-  orientationAction?: "enter" | "restore" | "unsupported";
+  orientationAction?: "enter" | "restore" | "unsupported" | "wechat";
   onEnterPreferredOrientation?(): void;
   onEnableLandscapeCompatibility?(): void;
   landscapeCompatibilityRotation?: LandscapeCompatibilityRotation;
@@ -41,7 +41,7 @@ export default function GameViewport({
         style={stageStyle}
       >
         {children}
-        {showOptions && (
+        {showOptions && orientationAction !== "wechat" && (
           <button
             className="platform-menu-button"
             type="button"
@@ -53,7 +53,37 @@ export default function GameViewport({
           </button>
         )}
       </div>
-      {orientationAction === "unsupported" ? (
+      {orientationAction === "wechat" ? (
+        <div
+          className="game-orientation-gate game-orientation-wechat"
+          role="alert"
+        >
+          <div className="wechat-browser-guidance">
+            <svg
+              aria-hidden="true"
+              className="wechat-browser-guidance-arrow"
+              viewBox="0 0 100 100"
+            >
+              <path d="M10 86C52 86 76 64 84 10" />
+              <path d="m68 20 16-10 11 15" />
+            </svg>
+            <p>
+              <span>{t("openWeChatMenu")}</span>
+              <span>{t("chooseOpenInBrowser")}</span>
+            </p>
+          </div>
+          {onEnableLandscapeCompatibility && (
+            <button
+              className="game-orientation-enter"
+              type="button"
+              onClick={onEnableLandscapeCompatibility}
+            >
+              <Smartphone className="landscape-mode-icon" aria-hidden="true" />
+              <span>{t("continueInLandscapeMode")}</span>
+            </button>
+          )}
+        </div>
+      ) : orientationAction === "unsupported" ? (
         <div
           className="game-orientation-gate game-orientation-unsupported"
           role="alert"

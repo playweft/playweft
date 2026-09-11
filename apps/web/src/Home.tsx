@@ -43,6 +43,11 @@ interface HomeProps {
   onPlaySolo(game: RecentGame): void;
 }
 
+interface LaunchFromValueOptions {
+  preferSolo?: boolean;
+  populateInputOnFailure?: boolean;
+}
+
 export default function Home({
   externalGameUrl,
   suppressGameShelves,
@@ -175,8 +180,14 @@ export default function Home({
     void createRoomForGame(recentGame);
   };
 
-  const launchInput = async (url = gameUrl, preferSolo = false) => {
-    const trimmed = url.trim();
+  const launchFromValue = async (
+    value: string,
+    {
+      preferSolo = false,
+      populateInputOnFailure = false,
+    }: LaunchFromValueOptions = {},
+  ) => {
+    const trimmed = value.trim();
     const roomId = roomIdFromInput(trimmed);
     if (roomId) {
       void joinRoomById(roomId);
@@ -193,6 +204,7 @@ export default function Home({
     } catch (reason) {
       if (cancelled()) return;
       onEntryStatus(undefined);
+      if (populateInputOnFailure) setGameUrl(trimmed);
       if (reason instanceof UnsupportedGameUrlError) {
         setUnsupportedGame({ url: reason.url, error: reason.message });
       } else {
@@ -203,8 +215,10 @@ export default function Home({
 
   useEffect(() => {
     if (!externalGameUrl || !onClaimExternalGameUrl(externalGameUrl)) return;
-    setGameUrl(externalGameUrl);
-    void launchInput(externalGameUrl, true);
+    void launchFromValue(externalGameUrl, {
+      preferSolo: true,
+      populateInputOnFailure: true,
+    });
   }, [externalGameUrl, onClaimExternalGameUrl]);
 
   const openGameMenu = (
@@ -315,7 +329,7 @@ export default function Home({
             className="launch-form"
             onSubmit={(event) => {
               event.preventDefault();
-              void launchInput();
+              void launchFromValue(gameUrl);
             }}
           >
             <label className="sr-only" htmlFor="game-url">

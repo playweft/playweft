@@ -23,9 +23,10 @@ interface LockableScreenOrientation extends ScreenOrientation {
 }
 
 export interface GameViewportController {
-  orientationAction?: "enter" | "restore" | "unsupported";
+  orientationAction?: "enter" | "restore" | "unsupported" | "wechat";
   showFullscreenAction: boolean;
   showLandscapeCompatibility: boolean;
+  deferGameLoad: boolean;
   landscapeCompatibilityRotation?: LandscapeCompatibilityRotation;
   enterPreferredOrientation(): Promise<void>;
   enableLandscapeCompatibility(): void;
@@ -113,6 +114,33 @@ function supportsMobileOrientationLock(): boolean {
     lockableOrientation()?.lock &&
     (navigator.maxTouchPoints > 0 ||
       window.matchMedia("(pointer: coarse)").matches),
+  );
+}
+
+function isWeChatInAppBrowser(): boolean {
+  return (
+    /MicroMessenger\//i.test(navigator.userAgent) &&
+    (navigator.maxTouchPoints > 0 ||
+      window.matchMedia("(pointer: coarse)").matches)
+  );
+}
+
+function needsWeChatLandscapeGuidance(
+  orientation: Exclude<GameManifestOrientation, "any">,
+): boolean {
+  return (
+    isWeChatInAppBrowser() &&
+    landscapeOrientation(orientation) &&
+    !matchesPreferredOrientation(orientation)
+  );
+}
+
+export function shouldShowWeChatLandscapeGuidance(
+  orientation: GameManifestOrientation | undefined,
+): boolean {
+  return (
+    preferredOrientation(orientation) &&
+    needsWeChatLandscapeGuidance(orientation)
   );
 }
 
@@ -271,6 +299,12 @@ export function prepareGameOrientation(
   if (!preferredOrientation(orientation) || !supportsMobileOrientationLock()) {
     return Promise.resolve("failed");
   }
+  // WeChat exposes screen.orientation.lock(), but its Android webview rejects
+  // it even after fullscreen. Do not make an optimistic fullscreen attempt:
+  // the viewport hook presents its browser-open guidance instead.
+  if (shouldShowWeChatLandscapeGuidance(orientation)) {
+    return Promise.resolve("unsupported");
+  }
   if (gameOrientationLockUnsupported) return Promise.resolve("unsupported");
   if (pendingGameOrientation) return pendingGameOrientation;
   const attempt = (async () => {
@@ -314,7 +348,7 @@ export function useGameViewport(
   preferences?: GameViewportPreferences,
 ): GameViewportController {
   const [orientationAction, setOrientationAction] = useState<
-    "enter" | "restore" | "unsupported"
+    "enter" | "restore" | "unsupported" | "wechat"
   >();
   const [showFullscreenAction, setShowFullscreenAction] = useState(false);
   const [orientationLockUnsupported, setOrientationLockUnsupported] =
@@ -524,6 +558,18 @@ export function useGameViewport(
     // the background must not retry the native lock and replace the game with
     // its unsupported-browser gate.
     if (landscapeCompatibility) return;
+    if (isWeChatInAppBrowser() && landscapeOrientation(preference)) {
+      const query = window.matchMedia("(orientation: landscape)");
+      const updateWeChatGuidance = () => {
+        setOrientationAction(
+          matchesPreferredOrientation(preference) ? undefined : "wechat",
+        );
+        setShowFullscreenAction(false);
+      };
+      updateWeChatGuidance();
+      query.addEventListener("change", updateWeChatGuidance);
+      return () => query.removeEventListener("change", updateWeChatGuidance);
+    }
     if (orientationLockUnsupported || gameOrientationLockUnsupported) {
       setOrientationLockUnsupported(true);
       setOrientationAction("unsupported");
@@ -629,6 +675,10 @@ export function useGameViewport(
       active &&
       landscapeOrientation(preferences?.orientation) &&
       !viewportLandscape &&
+      !landscapeCompatibility,
+    deferGameLoad:
+      active &&
+      shouldShowWeChatLandscapeGuidance(preferences?.orientation) &&
       !landscapeCompatibility,
     landscapeCompatibilityRotation:
       active && landscapeCompatibility && !viewportLandscape

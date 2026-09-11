@@ -90,6 +90,11 @@ function embeddedFeaturedGameSources(): unknown[] | null {
 }
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
   plugins: [
     react(),
     gameManifestSchema(),

@@ -11,7 +11,10 @@
   },
   "background_color": "#ffffff",
   "theme_color": "#70b967",
-  "categories": ["games", "social"],
+  "categories": [
+    "games",
+    "social"
+  ],
   "icons": [
     {
       "src": "/icons/pwa-192.png",

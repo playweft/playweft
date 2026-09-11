@@ -15,15 +15,15 @@ import {
   hasPermissionGrant,
   rememberPermissionGrant,
 } from "./permission-grants";
+import GamePermissionPrompt, {
+  type GamePermissionPromptState,
+} from "./GamePermissionPrompt";
 
 const PROMPT_TIMEOUT_MS = 30_000;
 
 export type UserProfileResult = Record<string, JsonValue>;
 
-interface PromptState {
-  gameName: string;
-  origin: string;
-}
+type PromptState = GamePermissionPromptState;
 
 interface PendingRequest {
   baseResult: UserProfileResult;
@@ -108,9 +108,7 @@ export function useUserProfileAccess(
   }, [finish]);
 
   const requestProfile = useCallback(
-    async (
-      fields: UserProfileField[],
-    ): Promise<UserProfileResult> => {
+    async (fields: UserProfileField[]): Promise<UserProfileResult> => {
       const identity = identityRef.current;
       if (!identity.manifestId || !identity.gameOrigin) {
         throw profileFault("NOT_ALLOWED", "The game identity is unavailable");
@@ -237,36 +235,26 @@ export function UserProfilePrompt({
   onDeny(): void;
 }) {
   const { t } = useI18n();
-  if (!prompt) return null;
   return (
-    <section
-      className="permission-prompt"
-      role="alertdialog"
-      aria-labelledby="user-profile-prompt-title"
-    >
-      <div>
-        <strong id="user-profile-prompt-title">
-          {t("userProfileAvatarRequest", { name: prompt.gameName })}
-        </strong>
-        <span>{prompt.origin}</span>
-        <small>{t("userProfileGrantRemembered")}</small>
-      </div>
-      <div className="permission-prompt-actions">
-        <button type="button" autoFocus onClick={onDeny}>
-          {t("deny")}
-        </button>
-        <button className="primary" type="button" onClick={onAllow}>
-          {t("allowOnce")}
-        </button>
-      </div>
-    </section>
+    <GamePermissionPrompt
+      prompt={prompt}
+      title={
+        prompt ? t("userProfileAvatarRequest", { name: prompt.gameName }) : ""
+      }
+      remembered={t("userProfileGrantRemembered")}
+      onAllow={onAllow}
+      onDeny={onDeny}
+    />
   );
 }
 
 export function userProfileFieldsFromRpcParams(
   params: unknown,
 ): UserProfileField[] | undefined {
-  if (!isRecord(params) || Object.keys(params).some((key) => key !== "fields")) {
+  if (
+    !isRecord(params) ||
+    Object.keys(params).some((key) => key !== "fields")
+  ) {
     return undefined;
   }
   if (

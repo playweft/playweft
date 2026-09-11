@@ -3,9 +3,17 @@ const MAX_GRANTED_GAMES = 128;
 const KNOWN_PERMISSIONS = new Set<PlatformPermission>([
   "clipboardRead",
   "profileAvatar",
+  "languageModelV1",
 ]);
 
-export type PlatformPermission = "clipboardRead" | "profileAvatar";
+// Permission names intentionally include the policy version when a grant can
+// result in remote work or user charges. Adding a broader language-model
+// policy must therefore require fresh approval instead of silently expanding
+// an earlier decision.
+export type PlatformPermission =
+  | "clipboardRead"
+  | "profileAvatar"
+  | "languageModelV1";
 type PermissionGrants = Record<string, PlatformPermission[]>;
 
 export function hasPermissionGrant(

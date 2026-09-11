@@ -24,7 +24,7 @@ export default function PlayerProfileMenu({
 }) {
   const { t } = useI18n();
   const [nicknameDialogOpen, setNicknameDialogOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(openSettingsFromLocation);
   const [draftNickname, setDraftNickname] = useState(nickname);
   const [session, setSession] = useState<PlatformSessionStatus>();
   const [avatarFailed, setAvatarFailed] = useState(false);
@@ -43,6 +43,17 @@ export default function PlayerProfileMenu({
   }, []);
 
   useEffect(() => setAvatarFailed(false), [session?.avatarUrl]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("settings") !== "1") return;
+    url.searchParams.delete("settings");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, []);
 
   const editNickname = () => {
     setDraftNickname(nickname || session?.name || "");
@@ -193,4 +204,8 @@ export default function PlayerProfileMenu({
       {settingsOpen && <SettingsDialog onBack={() => setSettingsOpen(false)} />}
     </div>
   );
+}
+
+function openSettingsFromLocation(): boolean {
+  return new URL(window.location.href).searchParams.get("settings") === "1";
 }

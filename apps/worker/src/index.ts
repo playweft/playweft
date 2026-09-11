@@ -11,6 +11,11 @@ import {
 } from "./platform-session";
 import { generateRoomId, roomIdMaxAttempts } from "./room-id";
 import { finishXOAuth, startXOAuth } from "./x-oauth";
+import {
+  cloudflareStatus,
+  finishCloudflareOAuth,
+  startCloudflareOAuth,
+} from "./cloudflare-oauth";
 import { issueProfileAvatar, serveProfileAvatar } from "./profile-avatar";
 
 const PLAYER_ID_HEADER = "X-Playweft-Player-Id";
@@ -31,6 +36,12 @@ export default {
       if (request.method === "GET" && url.pathname === "/api/platform/session") {
         return platformSessionStatus(request, env);
       }
+      if (
+        request.method === "GET" &&
+        url.pathname === "/api/platform/cloudflare"
+      ) {
+        return cloudflareStatus(request, env);
+      }
       if (request.method === "POST" && url.pathname === "/api/platform/logout") {
         return clearPlatformSession(request);
       }
@@ -45,6 +56,18 @@ export default {
       }
       if (request.method === "GET" && url.pathname === "/api/auth/x/callback") {
         return finishXOAuth(request, env);
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname === "/api/auth/cloudflare/start"
+      ) {
+        return startCloudflareOAuth(request, env);
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname === "/api/auth/cloudflare/callback"
+      ) {
+        return finishCloudflareOAuth(request, env);
       }
       if (request.method === "POST" && url.pathname === "/api/rooms") {
         requirePlatformOrigin(request);
@@ -80,10 +103,13 @@ export default {
           endpoints: {
             guestSession: "POST /api/platform/guest",
             platformSession: "GET /api/platform/session",
+            cloudflare: "GET /api/platform/cloudflare",
             profileAvatar: "POST /api/platform/profile/avatar",
             logout: "POST /api/platform/logout",
             xLogin: "GET /api/auth/x/start",
             xCallback: "GET /api/auth/x/callback",
+            cloudflareOAuthStart: "GET /api/auth/cloudflare/start",
+            cloudflareOAuthCallback: "GET /api/auth/cloudflare/callback",
             createRoom: "POST /api/rooms",
             launch: "GET /api/rooms/:roomId/launch",
             initialize: "PUT /api/rooms/:roomId/initialize",

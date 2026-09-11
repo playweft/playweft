@@ -1,10 +1,16 @@
 import { ArrowLeft } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   applyAppLoadPolicy,
   readAppLoadPolicy,
   type AppLoadPolicy,
 } from "./app-load-policy";
+import {
+  beginCloudflareOAuth,
+  getCloudflareStatus,
+  type CloudflareStatus,
+} from "./platform-api";
+import ErrorToast from "./ErrorToast";
 import { useI18n } from "./i18n";
 
 export default function SettingsDialog({ onBack }: { onBack(): void }) {
@@ -13,6 +19,14 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
   const [closing, setClosing] = useState(false);
   const [loadPolicy, setLoadPolicy] = useState(readAppLoadPolicy);
   const [applyingPolicy, setApplyingPolicy] = useState(false);
+  const [cloudflareStatus, setCloudflareStatus] = useState<
+    CloudflareStatus | undefined
+  >();
+  const [cloudflareOAuthFailed, setCloudflareOAuthFailed] = useState(
+    cloudflareOAuthFailureFromLocation,
+  );
+  const [cloudflareOAuthStarting, setCloudflareOAuthStarting] =
+    useState(false);
   const finished = useRef(false);
 
   const finish = () => {
@@ -37,11 +51,44 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
     return () => element.close();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void getCloudflareStatus()
+      .then((status) => {
+        if (!cancelled) setCloudflareStatus(status);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cloudflareOAuthFailed) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("cloudflare") !== "failed") return;
+    url.searchParams.delete("cloudflare");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, [cloudflareOAuthFailed]);
+
   const updateLoadPolicy = (nextPolicy: AppLoadPolicy) => {
     if (nextPolicy === loadPolicy || applyingPolicy) return;
     setLoadPolicy(nextPolicy);
     setApplyingPolicy(true);
     void applyAppLoadPolicy(nextPolicy).finally(() => setApplyingPolicy(false));
+  };
+
+  const connectCloudflare = () => {
+    if (cloudflareOAuthStarting) return;
+    setCloudflareOAuthStarting(true);
+    void beginCloudflareOAuth().catch(() => {
+      setCloudflareOAuthStarting(false);
+      setCloudflareOAuthFailed(true);
+    });
   };
 
   return (
@@ -96,8 +143,50 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
               </select>
             </label>
           </section>
+          {cloudflareStatus?.enabled && (
+            <section
+              className="settings-card"
+              aria-label="Cloudflare"
+            >
+              {cloudflareStatus.connected ? (
+                <div className="settings-list-item">
+                  <span>Cloudflare</span>
+                  <span
+                    className="settings-list-value"
+                    title={
+                      cloudflareStatus.displayName ??
+                      cloudflareStatus.email
+                    }
+                  >
+                    {cloudflareStatus.displayName ??
+                      cloudflareStatus.email ??
+                      t("cloudflareConnected")}
+                  </span>
+                </div>
+              ) : (
+                <button
+                  className="settings-list-item settings-list-button"
+                  type="button"
+                  disabled={cloudflareOAuthStarting}
+                  onClick={connectCloudflare}
+                >
+                  {t("connectCloudflare")}
+                </button>
+              )}
+            </section>
+          )}
         </div>
       </main>
+      {cloudflareOAuthFailed && (
+        <ErrorToast
+          message={t("cloudflareOAuthFailed")}
+          onDismiss={() => setCloudflareOAuthFailed(false)}
+        />
+      )}
     </dialog>
   );
+}
+
+function cloudflareOAuthFailureFromLocation(): boolean {
+  return new URL(window.location.href).searchParams.get("cloudflare") === "failed";
 }

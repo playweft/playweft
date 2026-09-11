@@ -190,6 +190,23 @@ export async function requirePlatformSession(
   return payload;
 }
 
+/**
+ * Reads the browser-local platform identity without treating its absence as a
+ * request failure. OAuth entry points use this to return a normal 401 for a
+ * direct navigation before the client has created its first guest session.
+ */
+export async function findPlatformSession(
+  request: Request,
+  env: Env,
+): Promise<PlatformSession | undefined> {
+  const token = readCookie(request.headers.get("Cookie"), COOKIE_NAME);
+  if (!token) return undefined;
+  const payload = await verify(token, requireSecret(env));
+  return payload && payload.exp > Math.floor(Date.now() / 1000)
+    ? payload
+    : undefined;
+}
+
 export function requirePlatformOrigin(request: Request): void {
   const requestOrigin = new URL(request.url).origin;
   if (request.headers.get("Origin") !== requestOrigin) {

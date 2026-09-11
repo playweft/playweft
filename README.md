@@ -205,7 +205,27 @@ put` immediately creates a new Worker version:
 npx wrangler secret put AUTH_SECRET --config apps/worker/wrangler.jsonc
 npx wrangler secret put X_CLIENT_ID --config apps/worker/wrangler.jsonc
 npx wrangler secret put X_CLIENT_SECRET --config apps/worker/wrangler.jsonc
+npx wrangler secret put CLOUDFLARE_OAUTH_CLIENT_SECRET --config apps/worker/wrangler.jsonc
 ```
+
+To enable the optional Cloudflare connection, configure its OAuth client as a
+confidential Authorization Code client with `client_secret_basic`. Enable both
+the `authorization_code` and `refresh_token` grant types, then register this
+exact redirect URL:
+
+```text
+https://play.example.com/api/auth/cloudflare/callback
+```
+
+`CLOUDFLARE_OAUTH_CLIENT_ID` is a non-secret Worker variable, while the client
+secret is a Worker secret. Playweft derives a separate AES key from
+`AUTH_SECRET` with a Cloudflare-specific context, then encrypts the Cloudflare
+access token into an HttpOnly, SameSite cookie scoped only to
+`/api/platform/cloudflare`; it keeps no per-user Durable Object, KV, or D1
+record for it. The short-lived access token is refreshed only when a protected
+Cloudflare request needs it. Playweft explicitly requests the protocol scope
+`offline_access`; configure `user-details.read` as a required scope. `ai.write`
+may be configured as an optional scope for a future Workers AI integration.
 
 To enable Sign in with X, configure the X App as an OAuth 2.0 Web App and
 register this exact Callback URL, replacing the example host with the deployed

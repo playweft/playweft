@@ -79,9 +79,46 @@ export interface PlatformSessionStatus {
   username?: string;
 }
 
+export interface CloudflareStatus {
+  enabled: boolean;
+  connected: boolean;
+  displayName?: string;
+  email?: string;
+  expiresAt?: number;
+  scopes?: string[];
+}
+
 export interface IssuedProfileAvatar {
   src: string | null;
   expiresAt?: number;
+}
+
+export function getCloudflareStatus(): Promise<CloudflareStatus> {
+  return fetch(endpoint("/api/platform/cloudflare"), {
+    credentials: "same-origin",
+    cache: "no-store",
+  }).then(responseJson<CloudflareStatus>);
+}
+
+export function cloudflareOAuthStartUrl(): string {
+  const url = endpoint("/api/auth/cloudflare/start");
+  const returnTo = new URL(window.location.href);
+  returnTo.searchParams.set("settings", "1");
+  url.searchParams.set(
+    "return_to",
+    `${returnTo.pathname}${returnTo.search}${returnTo.hash}`,
+  );
+  return url.toString();
+}
+
+/**
+ * Cloudflare connections belong to a local Playweft identity. A visitor who
+ * has not yet joined a room therefore gets a guest identity just before the
+ * OAuth redirect; this is not a sign-in requirement.
+ */
+export async function beginCloudflareOAuth(): Promise<void> {
+  await createGuestSession();
+  window.location.assign(cloudflareOAuthStartUrl());
 }
 
 export function initializeRoom(

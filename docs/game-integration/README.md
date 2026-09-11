@@ -296,6 +296,12 @@ the call. The first approval is remembered per Manifest `id`. Later reads skip
 the custom approval prompt but still show a short top-level notice.
 Browser-native clipboard UI may still appear.
 
+Platform permissions are scoped to the Manifest `id`, not to an iframe URL or
+an individual room. A remembered approval never grants another game access.
+For a capability that can incur remote usage, the permission name includes a
+policy version. A later, broader policy therefore needs a fresh approval; it
+cannot silently reuse an older grant.
+
 The result is limited to 64 KiB. Stable failure codes include `USER_DENIED`,
 `REQUEST_EXPIRED`, `NOT_SUPPORTED`, `NOT_ALLOWED`, `TOO_LARGE`, `BUSY`,
 `RATE_LIMITED` and `READ_FAILED`.

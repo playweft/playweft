@@ -66,6 +66,9 @@ cleanupOutdatedCaches();
 clientsClaim();
 
 function isApplicationShellRequest(request: Request, url: URL): boolean {
+  // OAuth callbacks are top-level navigations too, but they must always reach
+  // the Worker API instead of being mistaken for the SPA shell.
+  if (url.pathname.startsWith("/api/")) return false;
   return (
     request.mode === "navigate" ||
     url.pathname.startsWith("/assets/") ||

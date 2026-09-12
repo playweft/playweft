@@ -25,11 +25,7 @@ interface PendingRequest {
   timeout: number;
 }
 
-/**
- * The user-consent half of Workers AI access. Invocation deliberately lives
- * elsewhere: this hook must not be used to imply that an arbitrary model or
- * Cloudflare account is available.
- */
+/** User-consent half of Playweft's bounded Workers AI text capability. */
 export function useLanguageModelPermission(
   gameName: string,
   gameOrigin: string | undefined,

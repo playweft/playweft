@@ -7,7 +7,10 @@ import {
 } from "@/app/app-load-policy";
 import {
   beginCloudflareOAuth,
+  getCloudflareAccounts,
   getCloudflareStatus,
+  selectCloudflareAccount,
+  type CloudflareAccountsResponse,
   type CloudflareStatus,
 } from "@/platform/platform-api";
 import ErrorToast from "@/components/ErrorToast";
@@ -26,6 +29,11 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
     cloudflareOAuthFailureFromLocation,
   );
   const [cloudflareOAuthStarting, setCloudflareOAuthStarting] =
+    useState(false);
+  const [cloudflareAccounts, setCloudflareAccounts] = useState<
+    CloudflareAccountsResponse | undefined
+  >();
+  const [updatingCloudflareAccount, setUpdatingCloudflareAccount] =
     useState(false);
   const finished = useRef(false);
 
@@ -64,6 +72,22 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
   }, []);
 
   useEffect(() => {
+    if (!cloudflareStatus?.connected || cloudflareStatus.needsReconnect) {
+      setCloudflareAccounts(undefined);
+      return;
+    }
+    let cancelled = false;
+    void getCloudflareAccounts()
+      .then((accounts) => {
+        if (!cancelled) setCloudflareAccounts(accounts);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [cloudflareStatus?.connected, cloudflareStatus?.needsReconnect]);
+
+  useEffect(() => {
     if (!cloudflareOAuthFailed) return;
     const url = new URL(window.location.href);
     if (url.searchParams.get("cloudflare") !== "failed") return;
@@ -89,6 +113,20 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
       setCloudflareOAuthStarting(false);
       setCloudflareOAuthFailed(true);
     });
+  };
+
+  const updateCloudflareAccount = (accountId: string) => {
+    if (updatingCloudflareAccount || !cloudflareAccounts) return;
+    const previousAccountId = cloudflareAccounts.accountId;
+    setCloudflareAccounts({ ...cloudflareAccounts, accountId });
+    setUpdatingCloudflareAccount(true);
+    void selectCloudflareAccount(accountId)
+      .catch(() => {
+        setCloudflareAccounts((current) =>
+          current ? { ...current, accountId: previousAccountId } : current,
+        );
+      })
+      .finally(() => setUpdatingCloudflareAccount(false));
   };
 
   return (
@@ -149,20 +187,68 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
               aria-label="Cloudflare"
             >
               {cloudflareStatus.connected ? (
-                <div className="settings-list-item">
-                  <span>Cloudflare</span>
-                  <span
-                    className="settings-list-value"
-                    title={
-                      cloudflareStatus.displayName ??
-                      cloudflareStatus.email
-                    }
-                  >
-                    {cloudflareStatus.displayName ??
-                      cloudflareStatus.email ??
-                      t("cloudflareConnected")}
-                  </span>
-                </div>
+                <>
+                  <div className="settings-list-item">
+                    <span>Cloudflare</span>
+                    <span
+                      className="settings-list-value"
+                      title={
+                        cloudflareStatus.displayName ??
+                        cloudflareStatus.email
+                      }
+                    >
+                      {cloudflareStatus.displayName ??
+                        cloudflareStatus.email ??
+                        t("cloudflareConnected")}
+                    </span>
+                  </div>
+                  {cloudflareStatus.needsReconnect ? (
+                    <button
+                      className="settings-list-item settings-list-button"
+                      type="button"
+                      disabled={cloudflareOAuthStarting}
+                      onClick={connectCloudflare}
+                    >
+                      {t("updateCloudflareAuthorization")}
+                    </button>
+                  ) : (
+                    <>
+                      {cloudflareAccounts &&
+                        cloudflareAccounts.accounts.length > 0 && (
+                          <label className="settings-list-item">
+                            <span>{t("cloudflareAccount")}</span>
+                            <select
+                              aria-label={t("cloudflareAccount")}
+                              disabled={updatingCloudflareAccount}
+                              value={cloudflareAccounts.accountId ?? ""}
+                              onChange={(event) =>
+                                updateCloudflareAccount(event.target.value)
+                              }
+                            >
+                              <option value="" disabled>
+                                {t("selectCloudflareAccount")}
+                              </option>
+                              {cloudflareAccounts.accounts.map((account) => (
+                                <option key={account.id} value={account.id}>
+                                  {account.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                      {!cloudflareStatus.scopes?.includes("ai.write") && (
+                        <button
+                          className="settings-list-item settings-list-button"
+                          type="button"
+                          disabled={cloudflareOAuthStarting}
+                          onClick={connectCloudflare}
+                        >
+                          {t("authorizeWorkersAi")}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </>
               ) : (
                 <button
                   className="settings-list-item settings-list-button"

@@ -8,6 +8,8 @@ import {
 const AUTHORIZE_URL = "https://dash.cloudflare.com/oauth2/auth";
 const TOKEN_URL = "https://dash.cloudflare.com/oauth2/token";
 const USER_URL = "https://api.cloudflare.com/client/v4/user";
+const MEMBERSHIPS_URL = "https://api.cloudflare.com/client/v4/memberships";
+const WORKERS_AI_URL = "https://api.cloudflare.com/client/v4/accounts";
 const OAUTH_COOKIE_NAME = "playweft_cloudflare_oauth";
 const CONNECTION_COOKIE_NAME = "playweft_cloudflare_connection";
 const OAUTH_TTL_SECONDS = 10 * 60;
@@ -15,8 +17,16 @@ const ACCESS_TOKEN_REFRESH_SKEW_MS = 60 * 1_000;
 const CONNECTION_VERSION = "v1";
 // Make the OIDC offline-access request explicit. The client must also enable
 // the refresh_token grant type in its dashboard configuration.
-const REQUIRED_SCOPES = ["user-details.read", "offline_access"];
+const REQUIRED_SCOPES = [
+  "user-details.read",
+  "memberships.read",
+  "offline_access",
+];
 const OPTIONAL_SCOPES = ["ai.write"];
+const TEXT_SMALL_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+const MAX_PROMPT_MESSAGES = 16;
+const MAX_PROMPT_INPUT_CHARS = 16_000;
+const MAX_PROMPT_OUTPUT_TOKENS = 512;
 
 interface OAuthState {
   state: string;
@@ -38,6 +48,16 @@ interface CloudflareUserResponse {
   result?: unknown;
 }
 
+interface LanguageModelMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+interface LanguageModelPrompt {
+  messages: LanguageModelMessage[];
+  maxOutputTokens: number;
+}
+
 interface StoredCloudflareConnection {
   subject: string;
   platformExpiresAt: number;
@@ -48,6 +68,7 @@ interface StoredCloudflareConnection {
   userId: string;
   displayName?: string;
   email?: string;
+  accountId?: string;
 }
 
 interface CloudflareTokenGrant {
@@ -69,6 +90,16 @@ export interface CloudflareStatus {
   email?: string;
   expiresAt?: number;
   scopes?: string[];
+  needsReconnect?: boolean;
+}
+
+export interface CloudflareAccount {
+  id: string;
+  name: string;
+}
+
+export interface LanguageModelPromptResult {
+  content: string;
 }
 
 export async function startCloudflareOAuth(
@@ -216,7 +247,113 @@ export async function cloudflareStatus(
     ...(connection.email ? { email: connection.email } : {}),
     ...(connection.expiresAt ? { expiresAt: connection.expiresAt } : {}),
     scopes: connection.scopes,
+    ...(connection.accountId ? { accountId: connection.accountId } : {}),
+    needsReconnect: !hasRequiredScopes(connection),
   } satisfies CloudflareStatus);
+}
+
+/** Returns the selected account and the accounts granted through this OAuth connection. */
+export async function cloudflareAccounts(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const { connection, setCookie } = await usableCloudflareConnection(
+    request,
+    env,
+  );
+  requireMembershipsScope(connection);
+  const accounts = await fetchCloudflareAccounts(connection.accessToken);
+  return noStoreJson(
+    {
+      accounts,
+      ...(connection.accountId ? { accountId: connection.accountId } : {}),
+    },
+    setCookie,
+  );
+}
+
+/** Persists one of the accounts returned by {@link cloudflareAccounts}. */
+export async function selectCloudflareAccount(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const body = await request.json().catch(() => undefined);
+  if (!isRecord(body) || !isCloudflareAccountId(body.accountId)) {
+    throw new PlatformSessionError(400, "Cloudflare account id is invalid");
+  }
+  const { connection } = await usableCloudflareConnection(request, env);
+  requireMembershipsScope(connection);
+  const accounts = await fetchCloudflareAccounts(connection.accessToken);
+  const account = accounts.find((item) => item.id === body.accountId);
+  if (!account) {
+    throw new PlatformSessionError(403, "Cloudflare account is not authorized");
+  }
+  const next = { ...connection, accountId: account.id };
+  return noStoreJson(
+    { accountId: account.id },
+    await connectionCookie(
+      request,
+      next,
+      authSecret(env),
+      connectionMaxAge(next),
+    ),
+  );
+}
+
+/** Executes Playweft's bounded text model on the user's selected account. */
+export async function promptCloudflareLanguageModel(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const prompt = languageModelPromptFromRequest(await request.json().catch(() => undefined));
+  if (!prompt) {
+    throw new PlatformSessionError(400, "Language-model request is invalid");
+  }
+  const { connection, setCookie } = await usableCloudflareConnection(request, env);
+  if (!connection.accountId) {
+    throw new PlatformSessionError(409, "A Cloudflare account must be selected");
+  }
+  if (!connection.scopes.includes("ai.write")) {
+    throw new PlatformSessionError(
+      409,
+      "Cloudflare Workers AI authorization is required",
+    );
+  }
+  const response = await fetch(
+    `${WORKERS_AI_URL}/${connection.accountId}/ai/run/${encodeURIComponent(TEXT_SMALL_MODEL)}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${connection.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messages: prompt.messages,
+        max_tokens: prompt.maxOutputTokens,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new PlatformSessionError(
+      response.status === 429 ? 429 : 502,
+      "Cloudflare Workers AI request failed",
+    );
+  }
+  const payload = (await response.json()) as CloudflareUserResponse;
+  const content =
+    payload.success === true && isRecord(payload.result)
+      ? textValue(payload.result.response)
+      : undefined;
+  if (!content) {
+    throw new PlatformSessionError(
+      502,
+      "Cloudflare Workers AI response is invalid",
+    );
+  }
+  return noStoreJson(
+    { content } satisfies LanguageModelPromptResult,
+    setCookie,
+  );
 }
 
 /**
@@ -228,33 +365,13 @@ export async function cloudflareAccessToken(
   request: Request,
   env: Env,
 ): Promise<CloudflareAccessToken> {
-  const session = await requirePlatformSession(request, env);
-  const connection = await readConnection(request, session.sub, env);
-  if (!connection) {
-    throw new PlatformSessionError(401, "Cloudflare connection required");
-  }
-  if (!accessTokenNeedsRefresh(connection)) {
-    return { accessToken: connection.accessToken };
-  }
-  if (!connection.refreshToken) {
-    throw new PlatformSessionError(401, "Cloudflare connection has expired");
-  }
-
-  const refreshed = await refreshAccessToken(env, connection.refreshToken);
-  const next: StoredCloudflareConnection = {
-    ...connection,
-    accessToken: refreshed.accessToken,
-    scopes: refreshed.scopes ?? connection.scopes,
-    ...(refreshed.expiresAt ? { expiresAt: refreshed.expiresAt } : {}),
-    ...(refreshed.refreshToken ? { refreshToken: refreshed.refreshToken } : {}),
-  };
-  const maxAge = connectionMaxAge(next);
-  if (maxAge <= 0) {
-    throw new PlatformSessionError(401, "Cloudflare connection has expired");
-  }
+  const { connection, setCookie } = await usableCloudflareConnection(
+    request,
+    env,
+  );
   return {
-    accessToken: next.accessToken,
-    setCookie: await connectionCookie(request, next, authSecret(env), maxAge),
+    accessToken: connection.accessToken,
+    ...(setCookie ? { setCookie } : {}),
   };
 }
 
@@ -359,6 +476,134 @@ async function fetchCloudflareUser(
   };
 }
 
+async function fetchCloudflareAccounts(
+  accessToken: string,
+): Promise<CloudflareAccount[]> {
+  const response = await fetch(
+    `${MEMBERSHIPS_URL}?status=accepted&per_page=50`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  if (!response.ok) {
+    throw new PlatformSessionError(502, "Cloudflare account lookup failed");
+  }
+  const payload = (await response.json()) as CloudflareUserResponse;
+  if (payload.success !== true || !Array.isArray(payload.result)) {
+    throw new PlatformSessionError(
+      502,
+      "Cloudflare account response is invalid",
+    );
+  }
+  const accounts = payload.result.flatMap((membership) => {
+    if (!isRecord(membership) || !isRecord(membership.account)) return [];
+    const id = membership.account.id;
+    const name = textValue(membership.account.name);
+    return isCloudflareAccountId(id) && name ? [{ id, name }] : [];
+  });
+  return [
+    ...new Map(accounts.map((account) => [account.id, account])).values(),
+  ];
+}
+
+async function usableCloudflareConnection(
+  request: Request,
+  env: Env,
+): Promise<{ connection: StoredCloudflareConnection; setCookie?: string }> {
+  const session = await requirePlatformSession(request, env);
+  const connection = await readConnection(request, session.sub, env);
+  if (!connection) {
+    throw new PlatformSessionError(401, "Cloudflare connection required");
+  }
+  if (!accessTokenNeedsRefresh(connection)) return { connection };
+  if (!connection.refreshToken) {
+    throw new PlatformSessionError(401, "Cloudflare connection has expired");
+  }
+
+  const refreshed = await refreshAccessToken(env, connection.refreshToken);
+  const next: StoredCloudflareConnection = {
+    ...connection,
+    accessToken: refreshed.accessToken,
+    scopes: refreshed.scopes ?? connection.scopes,
+    ...(refreshed.expiresAt ? { expiresAt: refreshed.expiresAt } : {}),
+    ...(refreshed.refreshToken ? { refreshToken: refreshed.refreshToken } : {}),
+  };
+  const maxAge = connectionMaxAge(next);
+  if (maxAge <= 0) {
+    throw new PlatformSessionError(401, "Cloudflare connection has expired");
+  }
+  return {
+    connection: next,
+    setCookie: await connectionCookie(request, next, authSecret(env), maxAge),
+  };
+}
+
+function requireMembershipsScope(connection: StoredCloudflareConnection): void {
+  if (!connection.scopes.includes("memberships.read")) {
+    throw new PlatformSessionError(
+      409,
+      "Cloudflare connection needs updated authorization",
+    );
+  }
+}
+
+function hasRequiredScopes(connection: StoredCloudflareConnection): boolean {
+  return REQUIRED_SCOPES.every((scope) => connection.scopes.includes(scope));
+}
+
+function languageModelPromptFromRequest(value: unknown): LanguageModelPrompt | undefined {
+  if (!isRecord(value) || !("input" in value)) {
+    return undefined;
+  }
+  const messages = languageModelMessages(value.input);
+  if (!messages) return undefined;
+  if (value.options !== undefined && !isRecord(value.options)) {
+    return undefined;
+  }
+  const maxOutputTokens =
+    value.options?.maxOutputTokens === undefined
+      ? 256
+      : value.options.maxOutputTokens;
+  if (
+    typeof maxOutputTokens !== "number" ||
+    !Number.isInteger(maxOutputTokens) ||
+    maxOutputTokens < 1 ||
+    maxOutputTokens > MAX_PROMPT_OUTPUT_TOKENS
+  ) {
+    return undefined;
+  }
+  return { messages, maxOutputTokens };
+}
+
+function languageModelMessages(
+  input: unknown,
+): LanguageModelMessage[] | undefined {
+  if (typeof input === "string") {
+    return input.length > 0 && input.length <= MAX_PROMPT_INPUT_CHARS
+      ? [{ role: "user", content: input }]
+      : undefined;
+  }
+  if (!Array.isArray(input) || input.length === 0 || input.length > MAX_PROMPT_MESSAGES) {
+    return undefined;
+  }
+  let inputChars = 0;
+  const messages: LanguageModelMessage[] = [];
+  for (const message of input) {
+    if (
+      !isRecord(message) ||
+      (message.role !== "system" && message.role !== "user" && message.role !== "assistant") ||
+      typeof message.content !== "string" ||
+      message.content.length === 0
+    ) {
+      return undefined;
+    }
+    inputChars += message.content.length;
+    if (inputChars > MAX_PROMPT_INPUT_CHARS) return undefined;
+    messages.push({ role: message.role, content: message.content });
+  }
+  return messages;
+}
+
 async function readConnection(
   request: Request,
   subject: string,
@@ -429,7 +674,8 @@ async function decryptConnection(
         (typeof value.expiresAt !== "number" ||
           !Number.isFinite(value.expiresAt))) ||
       (value.refreshToken !== undefined &&
-        (typeof value.refreshToken !== "string" || !value.refreshToken))
+        (typeof value.refreshToken !== "string" || !value.refreshToken)) ||
+      (value.accountId !== undefined && !isCloudflareAccountId(value.accountId))
     ) {
       throw new Error();
     }
@@ -448,6 +694,9 @@ async function decryptConnection(
         : {}),
       ...(typeof value.refreshToken === "string"
         ? { refreshToken: value.refreshToken }
+        : {}),
+      ...(typeof value.accountId === "string"
+        ? { accountId: value.accountId }
         : {}),
     };
   } catch {
@@ -635,6 +884,10 @@ function noStoreJson(value: unknown, cookie?: string, status = 200): Response {
 
 function textValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function isCloudflareAccountId(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{32}$/.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

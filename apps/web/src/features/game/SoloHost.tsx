@@ -11,6 +11,14 @@ import GameWindowDialog, {
 } from "@/features/game/GameWindowDialog";
 import { ClipboardPrompt, useClipboardRead } from "@/features/permissions/ClipboardPrompt";
 import {
+  LanguageModelPermissionPrompt,
+  useLanguageModelPermission,
+} from "@/features/permissions/LanguageModelPermission";
+import {
+  languageModelPromptFromRpcParams,
+  requestLanguageModel,
+} from "@/features/permissions/language-model";
+import {
   UserProfilePrompt,
   userProfileFieldsFromRpcParams,
   useUserProfileAccess,
@@ -65,6 +73,11 @@ export default function SoloHost({
     currentGame.manifestId,
     nickname,
   );
+  const languageModel = useLanguageModelPermission(
+    gameName,
+    gameOrigin,
+    currentGame.manifestId,
+  );
   const windowDialogs = useGameWindowDialogs(gameName, gameOrigin);
   const gameViewport = useGameViewport(true, currentGame);
 
@@ -109,6 +122,7 @@ export default function SoloHost({
         ...PLATFORM_WINDOW_CAPABILITIES,
         "user.getProfile",
         "navigator.clipboard.readText",
+        "languageModel.prompt",
       ]),
     ];
     const detachBridge = attachGameBridge({
@@ -117,6 +131,7 @@ export default function SoloHost({
       onBeforeConnect() {
         clipboard.cancelPending();
         userProfile.cancelPending();
+        languageModel.cancelPending();
         windowDialogs.cancelPending();
       },
       handlers: {
@@ -171,6 +186,19 @@ export default function SoloHost({
             return userProfile.requestProfile(fields);
           },
         },
+        "languageModel.prompt": {
+          async handle(params) {
+            const prompt = languageModelPromptFromRpcParams(params);
+            if (!prompt) {
+              throw new RpcFault(
+                JsonRpcErrorCode.InvalidParams,
+                "languageModel.prompt expects { input, options?: { maxOutputTokens? } }",
+              );
+            }
+            await languageModel.requestPermission();
+            return requestLanguageModel(prompt);
+          },
+        },
         "window.alert": {
           handle: windowDialogs.requestAlert,
         },
@@ -182,6 +210,7 @@ export default function SoloHost({
     return () => {
       clipboard.cancelPending();
       userProfile.cancelPending();
+      languageModel.cancelPending();
       windowDialogs.cancelPending();
       detachBridge();
     };
@@ -191,6 +220,8 @@ export default function SoloHost({
     gameOrigin,
     gameViewport.deferGameLoad,
     loaded,
+    languageModel.cancelPending,
+    languageModel.requestPermission,
     userProfile.cancelPending,
     userProfile.requestProfile,
     windowDialogs.cancelPending,
@@ -277,6 +308,11 @@ export default function SoloHost({
         prompt={userProfile.prompt}
         onAllow={userProfile.allow}
         onDeny={userProfile.deny}
+      />
+      <LanguageModelPermissionPrompt
+        prompt={languageModel.prompt}
+        onAllow={languageModel.allow}
+        onDeny={languageModel.deny}
       />
       {windowDialogs.dialog && (
         <GameWindowDialog

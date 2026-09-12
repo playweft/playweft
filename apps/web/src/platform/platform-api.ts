@@ -86,6 +86,38 @@ export interface CloudflareStatus {
   email?: string;
   expiresAt?: number;
   scopes?: string[];
+  accountId?: string;
+  needsReconnect?: boolean;
+}
+
+export interface CloudflareAccount {
+  id: string;
+  name: string;
+}
+
+export interface CloudflareAccountsResponse {
+  accounts: CloudflareAccount[];
+  accountId?: string;
+}
+
+export interface LanguageModelMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export type LanguageModelInput = string | LanguageModelMessage[];
+
+export interface LanguageModelPromptOptions {
+  maxOutputTokens?: number;
+}
+
+export interface LanguageModelPromptRequest {
+  input: LanguageModelInput;
+  options?: LanguageModelPromptOptions;
+}
+
+export interface LanguageModelPromptResult {
+  content: string;
 }
 
 export interface IssuedProfileAvatar {
@@ -98,6 +130,35 @@ export function getCloudflareStatus(): Promise<CloudflareStatus> {
     credentials: "same-origin",
     cache: "no-store",
   }).then(responseJson<CloudflareStatus>);
+}
+
+export function getCloudflareAccounts(): Promise<CloudflareAccountsResponse> {
+  return fetch(endpoint("/api/platform/cloudflare/accounts"), {
+    credentials: "same-origin",
+    cache: "no-store",
+  }).then(responseJson<CloudflareAccountsResponse>);
+}
+
+export function selectCloudflareAccount(
+  accountId: string,
+): Promise<{ accountId: string }> {
+  return fetch(endpoint("/api/platform/cloudflare/account"), {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ accountId }),
+  }).then(responseJson<{ accountId: string }>);
+}
+
+export function promptLanguageModel(
+  prompt: LanguageModelPromptRequest,
+): Promise<LanguageModelPromptResult> {
+  return fetch(endpoint("/api/platform/cloudflare/ai/prompt"), {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(prompt),
+  }).then(responseJson<LanguageModelPromptResult>);
 }
 
 export function cloudflareOAuthStartUrl(): string {

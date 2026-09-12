@@ -12,8 +12,11 @@ import {
 import { generateRoomId, roomIdMaxAttempts } from "./room-id";
 import { finishXOAuth, startXOAuth } from "./x-oauth";
 import {
+  cloudflareAccounts,
   cloudflareStatus,
   finishCloudflareOAuth,
+  promptCloudflareLanguageModel,
+  selectCloudflareAccount,
   startCloudflareOAuth,
 } from "./cloudflare-oauth";
 import { issueProfileAvatar, serveProfileAvatar } from "./profile-avatar";
@@ -41,6 +44,26 @@ export default {
         url.pathname === "/api/platform/cloudflare"
       ) {
         return cloudflareStatus(request, env);
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname === "/api/platform/cloudflare/accounts"
+      ) {
+        return cloudflareAccounts(request, env);
+      }
+      if (
+        request.method === "PUT" &&
+        url.pathname === "/api/platform/cloudflare/account"
+      ) {
+        requirePlatformOrigin(request);
+        return selectCloudflareAccount(request, env);
+      }
+      if (
+        request.method === "POST" &&
+        url.pathname === "/api/platform/cloudflare/ai/prompt"
+      ) {
+        requirePlatformOrigin(request);
+        return promptCloudflareLanguageModel(request, env);
       }
       if (request.method === "POST" && url.pathname === "/api/platform/logout") {
         return clearPlatformSession(request);
@@ -104,6 +127,10 @@ export default {
             guestSession: "POST /api/platform/guest",
             platformSession: "GET /api/platform/session",
             cloudflare: "GET /api/platform/cloudflare",
+            cloudflareAccounts: "GET /api/platform/cloudflare/accounts",
+            cloudflareAccount: "PUT /api/platform/cloudflare/account",
+            cloudflareLanguageModel:
+              "POST /api/platform/cloudflare/ai/prompt",
             profileAvatar: "POST /api/platform/profile/avatar",
             logout: "POST /api/platform/logout",
             xLogin: "GET /api/auth/x/start",

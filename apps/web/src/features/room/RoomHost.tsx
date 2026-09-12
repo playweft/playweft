@@ -55,6 +55,14 @@ import PlayerProfileMenu from "@/features/account/PlayerProfileMenu";
 import RoomIdCopy from "@/features/room/RoomIdCopy";
 import ChangeGameDialog from "@/features/room/ChangeGameDialog";
 import { ClipboardPrompt, useClipboardRead } from "@/features/permissions/ClipboardPrompt";
+import {
+  LanguageModelPermissionPrompt,
+  useLanguageModelPermission,
+} from "@/features/permissions/LanguageModelPermission";
+import {
+  languageModelPromptFromRpcParams,
+  requestLanguageModel,
+} from "@/features/permissions/language-model";
 import { useRoomPlayerProfileAccess } from "@/features/room/RoomPlayerProfile";
 import {
   UserProfilePrompt,
@@ -170,6 +178,11 @@ export default function RoomHost({
     gameOrigin,
     game?.manifestId,
     nickname,
+  );
+  const languageModel = useLanguageModelPermission(
+    gameName,
+    gameOrigin,
+    game?.manifestId,
   );
   const windowDialogs = useGameWindowDialogs(gameName, gameOrigin);
   useEffect(() => {
@@ -405,6 +418,7 @@ export default function RoomHost({
         ...PLATFORM_WINDOW_CAPABILITIES,
         "user.getProfile",
         "navigator.clipboard.readText",
+        "languageModel.prompt",
         "room.players.getProfile",
       ]),
     ];
@@ -711,6 +725,7 @@ export default function RoomHost({
       onBeforeConnect() {
         clipboard.cancelPending();
         userProfile.cancelPending();
+        languageModel.cancelPending();
         windowDialogs.cancelPending();
         rejectLiveActions("BRIDGE_REPLACED", "The game bridge was replaced");
       },
@@ -885,6 +900,19 @@ export default function RoomHost({
             return profile;
           },
         },
+        "languageModel.prompt": {
+          async handle(params) {
+            const prompt = languageModelPromptFromRpcParams(params);
+            if (!prompt) {
+              throw new RpcFault(
+                JsonRpcErrorCode.InvalidParams,
+                "languageModel.prompt expects { input, options?: { maxOutputTokens? } }",
+              );
+            }
+            await languageModel.requestPermission();
+            return requestLanguageModel(prompt);
+          },
+        },
         "window.alert": {
           handle: windowDialogs.requestAlert,
         },
@@ -905,6 +933,7 @@ export default function RoomHost({
       rejectLiveActions("BRIDGE_CLOSED", "The game bridge was closed");
       clipboard.cancelPending();
       userProfile.cancelPending();
+      languageModel.cancelPending();
       windowDialogs.cancelPending();
       detachBridge();
       if (setHeartbeatRequiredRef.current === setHeartbeatRequired) {
@@ -916,6 +945,8 @@ export default function RoomHost({
     gameUrl,
     gameViewport.deferGameLoad,
     loadedGame,
+    languageModel.cancelPending,
+    languageModel.requestPermission,
     onGameDiscovered,
     roomId,
     clipboard.cancelPending,
@@ -1449,6 +1480,11 @@ export default function RoomHost({
         prompt={userProfile.prompt}
         onAllow={userProfile.allow}
         onDeny={userProfile.deny}
+      />
+      <LanguageModelPermissionPrompt
+        prompt={languageModel.prompt}
+        onAllow={languageModel.allow}
+        onDeny={languageModel.deny}
       />
       {windowDialogs.dialog && (
         <GameWindowDialog

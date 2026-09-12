@@ -202,6 +202,7 @@ the platform has already loaded the package contract. Its result is:
     "window.alert",
     "window.confirm",
     "navigator.clipboard.readText",
+    "languageModel.prompt",
     "room.players.getProfile",
     "user.getProfile",
   ],
@@ -305,6 +306,46 @@ cannot silently reuse an older grant.
 The result is limited to 64 KiB. Stable failure codes include `USER_DENIED`,
 `REQUEST_EXPIRED`, `NOT_SUPPORTED`, `NOT_ALLOWED`, `TOO_LARGE`, `BUSY`,
 `RATE_LIMITED` and `READ_FAILED`.
+
+### Language model
+
+Games can request one bounded text-generation model through the user's own
+Cloudflare Workers AI account. The platform never exposes the Cloudflare token
+or account ID to the iframe. The first request asks the player for permission;
+approval is remembered per Manifest `id` and may incur usage charges on the
+selected Cloudflare account.
+
+```js
+const playweft = {
+  languageModel: {
+    prompt(input, options) {
+      return rpcCall("languageModel.prompt", { input, options });
+    },
+  },
+};
+
+const reply = await playweft.languageModel.prompt(
+  [
+    { role: "system", content: "You are a Mahjong teaching assistant." },
+    { role: "user", content: "My hand is … What should I discard?" },
+  ],
+  { maxOutputTokens: 256 },
+);
+console.log(reply);
+```
+
+The platform selects the text model; games cannot pass or inspect a Cloudflare
+model identifier. `input` is either a string or 1–16 `system`, `user`, or
+`assistant` messages, with at most 16,000 input characters in total. A string
+is sent as one `user` message. `options.maxOutputTokens` defaults to 256 and
+is capped at 512. The resolved `prompt()` value is the response text.
+Streaming, tools, images, and arbitrary model inputs are intentionally
+unsupported in v1.
+
+The player must connect Cloudflare, grant optional Workers AI access, and pick
+an account in Playweft settings. Stable failure codes include
+`CLOUDFLARE_CONNECTION_REQUIRED`, `LANGUAGE_MODEL_UNAVAILABLE`,
+`RATE_LIMITED`, and `LANGUAGE_MODEL_FAILED`.
 
 ### Room player profiles
 

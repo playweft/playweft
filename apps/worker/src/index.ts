@@ -13,7 +13,10 @@ import { generateRoomId, roomIdMaxAttempts } from "./room-id";
 import { finishXOAuth, startXOAuth } from "./x-oauth";
 import {
   cloudflareAccounts,
+  CloudflareConnectionError,
+  CloudflareUpstreamError,
   cloudflareStatus,
+  expiredCloudflareConnectionCookie,
   finishCloudflareOAuth,
   promptCloudflareLanguageModel,
   selectCloudflareAccount,
@@ -43,27 +46,27 @@ export default {
         request.method === "GET" &&
         url.pathname === "/api/platform/cloudflare"
       ) {
-        return cloudflareStatus(request, env);
+        return await cloudflareStatus(request, env);
       }
       if (
         request.method === "GET" &&
         url.pathname === "/api/platform/cloudflare/accounts"
       ) {
-        return cloudflareAccounts(request, env);
+        return await cloudflareAccounts(request, env);
       }
       if (
         request.method === "PUT" &&
         url.pathname === "/api/platform/cloudflare/account"
       ) {
         requirePlatformOrigin(request);
-        return selectCloudflareAccount(request, env);
+        return await selectCloudflareAccount(request, env);
       }
       if (
         request.method === "POST" &&
         url.pathname === "/api/platform/cloudflare/ai/prompt"
       ) {
         requirePlatformOrigin(request);
-        return promptCloudflareLanguageModel(request, env);
+        return await promptCloudflareLanguageModel(request, env);
       }
       if (request.method === "POST" && url.pathname === "/api/platform/logout") {
         return clearPlatformSession(request);
@@ -84,13 +87,13 @@ export default {
         request.method === "GET" &&
         url.pathname === "/api/auth/cloudflare/start"
       ) {
-        return startCloudflareOAuth(request, env);
+        return await startCloudflareOAuth(request, env);
       }
       if (
         request.method === "GET" &&
         url.pathname === "/api/auth/cloudflare/callback"
       ) {
-        return finishCloudflareOAuth(request, env);
+        return await finishCloudflareOAuth(request, env);
       }
       if (request.method === "POST" && url.pathname === "/api/rooms") {
         requirePlatformOrigin(request);
@@ -203,6 +206,42 @@ export default {
       setForwardedIdentity(forwarded, session, endpoint === "profile-avatar");
       return env.GAME_ROOMS.getByName(roomId).fetch(forwarded);
     } catch (error) {
+      if (error instanceof CloudflareUpstreamError) {
+        const requestId = crypto.randomUUID();
+        console.warn("cloudflare_request_failed", {
+          requestId,
+          operation: error.details.operation,
+          ...(error.details.model ? { model: error.details.model } : {}),
+          ...(error.details.upstreamStatus === undefined
+            ? {}
+            : { upstreamStatus: error.details.upstreamStatus }),
+          ...(error.details.upstreamCode === undefined
+            ? {}
+            : { upstreamCode: error.details.upstreamCode }),
+          durationMs: error.details.durationMs,
+          retryable: error.details.retryable,
+        });
+        return Response.json(
+          {
+            error: error.message,
+            requestId,
+            retryable: error.details.retryable,
+          },
+          {
+            status: error.status,
+            headers: {
+              "Cache-Control": "no-store",
+              "X-Playweft-Request-Id": requestId,
+              ...(error instanceof CloudflareConnectionError &&
+              error.clearConnection
+                ? {
+                    "Set-Cookie": expiredCloudflareConnectionCookie(request),
+                  }
+                : {}),
+            },
+          },
+        );
+      }
       if (error instanceof PlatformSessionError)
         return Response.json(
           { error: error.message },

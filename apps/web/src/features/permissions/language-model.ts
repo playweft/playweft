@@ -9,7 +9,8 @@ import { RpcFault } from "@/platform/json-rpc";
 
 const MAX_MESSAGES = 16;
 const MAX_INPUT_CHARS = 16_000;
-const MAX_OUTPUT_TOKENS = 512;
+const MAX_OUTPUT_TOKENS = 4_096;
+let queuedLanguageModelRequest = Promise.resolve();
 
 export function languageModelPromptFromRpcParams(
   params: JsonValue | undefined,
@@ -45,7 +46,8 @@ export async function requestLanguageModel(
   prompt: LanguageModelPromptRequest,
 ): Promise<string> {
   try {
-    return (await promptLanguageModel(prompt)).content;
+    return (await enqueueLanguageModelRequest(() => promptLanguageModel(prompt)))
+      .content;
   } catch (reason) {
     if (!(reason instanceof PlatformApiError)) {
       throw new RpcFault(
@@ -60,13 +62,27 @@ export async function requestLanguageModel(
         : reason.status === 409
           ? "LANGUAGE_MODEL_UNAVAILABLE"
           : reason.status === 429
-            ? "RATE_LIMITED"
+          ? "RATE_LIMITED"
             : "LANGUAGE_MODEL_FAILED";
     throw new RpcFault(JsonRpcErrorCode.PlatformError, reason.message, {
       code,
-      retryable: reason.status === 429 || reason.status >= 500,
+      retryable:
+        reason.retryable ??
+        (reason.status === 429 || reason.status >= 500),
+      ...(reason.requestId ? { requestId: reason.requestId } : {}),
     });
   }
+}
+
+function enqueueLanguageModelRequest<T>(request: () => Promise<T>): Promise<T> {
+  const next = queuedLanguageModelRequest.then(request, request);
+  // Keep the queue alive after a rejected model request, while returning the
+  // original result to its caller.
+  queuedLanguageModelRequest = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
 }
 
 function languageModelInput(

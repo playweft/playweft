@@ -337,8 +337,8 @@ console.log(reply);
 The platform selects the text model; games cannot pass or inspect a Cloudflare
 model identifier. `input` is either a string or 1–16 `system`, `user`, or
 `assistant` messages, with at most 16,000 input characters in total. A string
-is sent as one `user` message. `options.maxOutputTokens` defaults to 256 and
-is capped at 512. The resolved `prompt()` value is the response text.
+is sent as one `user` message. `options.maxOutputTokens` defaults to 4,096,
+which is also the cap. The resolved `prompt()` value is the response text.
 Streaming, tools, images, and arbitrary model inputs are intentionally
 unsupported in v1.
 

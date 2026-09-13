@@ -25,6 +25,8 @@ export class PlatformApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly requestId?: string,
+    readonly retryable?: boolean,
   ) {
     super(message);
     this.name = "PlatformApiError";
@@ -36,15 +38,33 @@ function endpoint(path: string): URL {
 }
 
 async function responseJson<T>(response: Response): Promise<T> {
-  const body = (await response.json()) as T | { error?: string };
+  const body = (await response.json()) as
+    | T
+    | { error?: string; requestId?: string; retryable?: boolean };
   if (!response.ok) {
     const error =
       body !== null && typeof body === "object" && "error" in body
         ? body.error
         : undefined;
+    const requestId =
+      body !== null &&
+      typeof body === "object" &&
+      "requestId" in body &&
+      typeof body.requestId === "string"
+        ? body.requestId
+        : undefined;
+    const retryable =
+      body !== null &&
+      typeof body === "object" &&
+      "retryable" in body &&
+      typeof body.retryable === "boolean"
+        ? body.retryable
+        : undefined;
     throw new PlatformApiError(
       typeof error === "string" ? error : `request failed (${response.status})`,
       response.status,
+      requestId,
+      retryable,
     );
   }
   return body as T;

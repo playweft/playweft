@@ -23,10 +23,10 @@ const REQUIRED_SCOPES = [
   "offline_access",
 ];
 const OPTIONAL_SCOPES = ["ai.write"];
-const TEXT_SMALL_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+const TEXT_SMALL_MODEL = "@cf/qwen/qwen3.8-27b";
 const MAX_PROMPT_MESSAGES = 16;
 const MAX_PROMPT_INPUT_CHARS = 16_000;
-const MAX_PROMPT_OUTPUT_TOKENS = 512;
+const MAX_PROMPT_OUTPUT_TOKENS = 4_096;
 
 interface OAuthState {
   state: string;
@@ -100,6 +100,62 @@ export interface CloudflareAccount {
 
 export interface LanguageModelPromptResult {
   content: string;
+}
+
+export type CloudflareOperation =
+  | "ai.prompt"
+  | "oauth.account_lookup"
+  | "oauth.token_exchange"
+  | "oauth.token_refresh"
+  | "oauth.user_lookup";
+
+interface CloudflareFailureDetails {
+  operation: CloudflareOperation;
+  model?: string;
+  upstreamStatus?: number;
+  upstreamCode?: string | number;
+  durationMs: number;
+  retryable: boolean;
+}
+
+/**
+ * A Cloudflare upstream request failed. Its structured diagnostics are logged
+ * exactly once at the Worker boundary; they must not contain user content,
+ * tokens, account identifiers, or provider error descriptions.
+ */
+export class CloudflareUpstreamError extends PlatformSessionError {
+  constructor(
+    status: number,
+    message: string,
+    readonly details: CloudflareFailureDetails,
+  ) {
+    super(status, message);
+  }
+}
+
+/**
+ * A user authorization was permanently invalidated and its browser cookie
+ * must be removed with the response.
+ */
+export class CloudflareConnectionError extends CloudflareUpstreamError {
+  constructor(
+    status: number,
+    message: string,
+    readonly clearConnection: boolean,
+    details: CloudflareFailureDetails,
+  ) {
+    super(status, message, details);
+  }
+}
+
+class CloudflareTokenEndpointError extends Error {
+  constructor(
+    readonly status: number | undefined,
+    readonly code: string | undefined,
+    readonly durationMs: number,
+  ) {
+    super("Cloudflare OAuth token endpoint rejected the request");
+  }
 }
 
 export async function startCloudflareOAuth(
@@ -226,7 +282,7 @@ export async function cloudflareStatus(
     return noStoreJson(
       { enabled: true, connected: false },
       connectionCookieIsPresent(request)
-        ? expiredConnectionCookie(request)
+        ? expiredCloudflareConnectionCookie(request)
         : undefined,
     );
   }
@@ -237,7 +293,7 @@ export async function cloudflareStatus(
   ) {
     return noStoreJson(
       { enabled: true, connected: false },
-      expiredConnectionCookie(request),
+      expiredCloudflareConnectionCookie(request),
     );
   }
   return noStoreJson({
@@ -319,35 +375,61 @@ export async function promptCloudflareLanguageModel(
       "Cloudflare Workers AI authorization is required",
     );
   }
-  const response = await fetch(
-    `${WORKERS_AI_URL}/${connection.accountId}/ai/run/${encodeURIComponent(TEXT_SMALL_MODEL)}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${connection.accessToken}`,
-        "Content-Type": "application/json",
+  const startedAt = Date.now();
+  let response: Response;
+  try {
+    response = await fetch(
+      `${WORKERS_AI_URL}/${connection.accountId}/ai/run/${TEXT_SMALL_MODEL}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${connection.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: prompt.messages,
+          max_tokens: prompt.maxOutputTokens,
+          // Playweft exposes Prompt-API-style text completion, not a reasoning
+          // channel. Reserving the requested output budget for visible text
+          // also prevents short game hints from ending before a final answer.
+          chat_template_kwargs: { enable_thinking: false },
+        }),
       },
-      body: JSON.stringify({
-        messages: prompt.messages,
-        max_tokens: prompt.maxOutputTokens,
-      }),
-    },
-  );
-  if (!response.ok) {
-    throw new PlatformSessionError(
-      response.status === 429 ? 429 : 502,
+    );
+  } catch {
+    throw cloudflareUpstreamError(
+      502,
       "Cloudflare Workers AI request failed",
+      "ai.prompt",
+      undefined,
+      undefined,
+      elapsedMs(startedAt),
     );
   }
-  const payload = (await response.json()) as CloudflareUserResponse;
+  if (!response.ok) {
+    throw cloudflareUpstreamError(
+      response.status === 429 ? 429 : 502,
+      "Cloudflare Workers AI request failed",
+      "ai.prompt",
+      response.status,
+      await cloudflareErrorCode(response),
+      elapsedMs(startedAt),
+    );
+  }
+  const payload = await response.json().catch(() => undefined);
   const content =
-    payload.success === true && isRecord(payload.result)
-      ? textValue(payload.result.response)
+    isRecord(payload) && isRecord(payload.result)
+      ? chatCompletionContent(payload.result)
       : undefined;
   if (!content) {
-    throw new PlatformSessionError(
+    throw cloudflareUpstreamError(
       502,
       "Cloudflare Workers AI response is invalid",
+      "ai.prompt",
+      response.status,
+      undefined,
+      elapsedMs(startedAt),
+      false,
     );
   }
   return noStoreJson(
@@ -380,52 +462,109 @@ async function exchangeCode(
   env: Env,
   code: string,
 ): Promise<CloudflareTokenGrant> {
-  return exchangeToken(
-    env,
-    new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: callbackUrl(request),
-    }),
-    "Cloudflare token exchange failed",
-  );
+  try {
+    return await exchangeToken(
+      env,
+      new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: callbackUrl(request),
+      }),
+    );
+  } catch (error) {
+    throw tokenEndpointFailure(
+      error,
+      "Cloudflare token exchange failed",
+      "oauth.token_exchange",
+    );
+  }
 }
 
 async function refreshAccessToken(
   env: Env,
   refreshToken: string,
 ): Promise<CloudflareTokenGrant> {
-  return exchangeToken(
-    env,
-    new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-    }),
-    "Cloudflare token refresh failed",
-  );
+  try {
+    return await exchangeToken(
+      env,
+      new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    );
+  } catch (error) {
+    if (
+      error instanceof CloudflareTokenEndpointError &&
+      error.code === "invalid_grant"
+    ) {
+      throw new CloudflareConnectionError(
+        401,
+        "Cloudflare connection needs to be reauthorized",
+        true,
+        {
+          operation: "oauth.token_refresh",
+          ...(error.status === undefined
+            ? {}
+            : { upstreamStatus: error.status }),
+          ...(error.code ? { upstreamCode: error.code } : {}),
+          durationMs: error.durationMs,
+          retryable: false,
+        },
+      );
+    }
+    throw tokenEndpointFailure(
+      error,
+      "Cloudflare token refresh failed",
+      "oauth.token_refresh",
+    );
+  }
 }
 
 async function exchangeToken(
   env: Env,
   body: URLSearchParams,
-  failureMessage: string,
 ): Promise<CloudflareTokenGrant> {
   const clientId = cloudflareClientId(env);
   const clientSecret = cloudflareClientSecret(env);
-  const response = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body,
-  });
-  if (!response.ok) {
-    throw new PlatformSessionError(502, failureMessage);
+  const startedAt = Date.now();
+  let response: Response;
+  try {
+    response = await fetch(TOKEN_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+  } catch {
+    throw new CloudflareTokenEndpointError(
+      undefined,
+      undefined,
+      elapsedMs(startedAt),
+    );
   }
-  const token = (await response.json()) as CloudflareTokenResponse;
-  if (typeof token.access_token !== "string" || !token.access_token) {
-    throw new PlatformSessionError(502, "Cloudflare token response is invalid");
+  if (!response.ok) {
+    const payload = await response.json().catch(() => undefined);
+    const code =
+      isRecord(payload) && typeof payload.error === "string"
+        ? safeCloudflareErrorCode(payload.error)
+        : undefined;
+    throw new CloudflareTokenEndpointError(
+      response.status,
+      typeof code === "string" ? code : undefined,
+      elapsedMs(startedAt),
+    );
+  }
+  const token = await response
+    .json()
+    .catch(() => undefined) as CloudflareTokenResponse | undefined;
+  if (!token || typeof token.access_token !== "string" || !token.access_token) {
+    throw new CloudflareTokenEndpointError(
+      response.status,
+      undefined,
+      elapsedMs(startedAt),
+    );
   }
   const expiresIn =
     typeof token.expires_in === "number" && token.expires_in > 0
@@ -445,25 +584,152 @@ async function exchangeToken(
   };
 }
 
+function tokenEndpointFailure(
+  error: unknown,
+  fallbackMessage: string,
+  operation: CloudflareOperation,
+): PlatformSessionError {
+  if (error instanceof PlatformSessionError) return error;
+  if (!(error instanceof CloudflareTokenEndpointError)) {
+    return cloudflareUpstreamError(
+      502,
+      fallbackMessage,
+      operation,
+      undefined,
+      undefined,
+      0,
+    );
+  }
+  if (
+    error.code === "invalid_client" ||
+    error.code === "unauthorized_client"
+  ) {
+    return cloudflareUpstreamError(
+      503,
+      "Cloudflare OAuth client configuration is invalid",
+      operation,
+      error.status,
+      error.code,
+      error.durationMs,
+      false,
+    );
+  }
+  if (error.status === 429) {
+    return cloudflareUpstreamError(
+      429,
+      fallbackMessage,
+      operation,
+      error.status,
+      error.code,
+      error.durationMs,
+    );
+  }
+  return cloudflareUpstreamError(
+    502,
+    fallbackMessage,
+    operation,
+    error.status,
+    error.code,
+    error.durationMs,
+  );
+}
+
+function cloudflareUpstreamError(
+  status: number,
+  message: string,
+  operation: CloudflareOperation,
+  upstreamStatus: number | undefined,
+  upstreamCode: string | number | undefined,
+  durationMs: number,
+  retryable = isRetryableCloudflareFailure(upstreamStatus),
+): CloudflareUpstreamError {
+  return new CloudflareUpstreamError(status, message, {
+    operation,
+    ...(operation === "ai.prompt" ? { model: TEXT_SMALL_MODEL } : {}),
+    ...(upstreamStatus === undefined ? {} : { upstreamStatus }),
+    ...(upstreamCode === undefined ? {} : { upstreamCode }),
+    durationMs,
+    retryable,
+  });
+}
+
+function isRetryableCloudflareFailure(status: number | undefined): boolean {
+  return status === undefined || status === 429 || status >= 500;
+}
+
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
+}
+
+async function cloudflareErrorCode(
+  response: Response,
+): Promise<string | number | undefined> {
+  const payload = await response.clone().json().catch(() => undefined);
+  if (!isRecord(payload)) return undefined;
+  if (Array.isArray(payload.errors) && payload.errors.length > 0) {
+    const firstError = payload.errors[0];
+    if (isRecord(firstError)) return safeCloudflareErrorCode(firstError.code);
+  }
+  if (isRecord(payload.error)) return safeCloudflareErrorCode(payload.error.code);
+  return safeCloudflareErrorCode(payload.code);
+}
+
+function safeCloudflareErrorCode(value: unknown): string | number | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+  return typeof value === "string" && /^[a-zA-Z0-9_.-]{1,64}$/.test(value)
+    ? value
+    : undefined;
+}
+
 async function fetchCloudflareUser(
   accessToken: string,
 ): Promise<
   Pick<StoredCloudflareConnection, "userId" | "displayName" | "email">
 > {
-  const response = await fetch(USER_URL, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!response.ok) {
-    throw new PlatformSessionError(502, "Cloudflare user lookup failed");
+  const startedAt = Date.now();
+  let response: Response;
+  try {
+    response = await fetch(USER_URL, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch {
+    throw cloudflareUpstreamError(
+      502,
+      "Cloudflare user lookup failed",
+      "oauth.user_lookup",
+      undefined,
+      undefined,
+      elapsedMs(startedAt),
+    );
   }
-  const payload = (await response.json()) as CloudflareUserResponse;
+  if (!response.ok) {
+    throw cloudflareUpstreamError(
+      502,
+      "Cloudflare user lookup failed",
+      "oauth.user_lookup",
+      response.status,
+      await cloudflareErrorCode(response),
+      elapsedMs(startedAt),
+    );
+  }
+  const payload = (await response.json().catch(() => undefined)) as
+    | CloudflareUserResponse
+    | undefined;
   if (
-    payload.success !== true ||
+    payload?.success !== true ||
     !isRecord(payload.result) ||
     typeof payload.result.id !== "string" ||
     !payload.result.id
   ) {
-    throw new PlatformSessionError(502, "Cloudflare user response is invalid");
+    throw cloudflareUpstreamError(
+      502,
+      "Cloudflare user response is invalid",
+      "oauth.user_lookup",
+      response.status,
+      undefined,
+      elapsedMs(startedAt),
+      false,
+    );
   }
   const firstName = textValue(payload.result.first_name);
   const lastName = textValue(payload.result.last_name);
@@ -479,20 +745,47 @@ async function fetchCloudflareUser(
 async function fetchCloudflareAccounts(
   accessToken: string,
 ): Promise<CloudflareAccount[]> {
-  const response = await fetch(
-    `${MEMBERSHIPS_URL}?status=accepted&per_page=50`,
-    {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    },
-  );
-  if (!response.ok) {
-    throw new PlatformSessionError(502, "Cloudflare account lookup failed");
+  const startedAt = Date.now();
+  let response: Response;
+  try {
+    response = await fetch(
+      `${MEMBERSHIPS_URL}?status=accepted&per_page=50`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+    );
+  } catch {
+    throw cloudflareUpstreamError(
+      502,
+      "Cloudflare account lookup failed",
+      "oauth.account_lookup",
+      undefined,
+      undefined,
+      elapsedMs(startedAt),
+    );
   }
-  const payload = (await response.json()) as CloudflareUserResponse;
-  if (payload.success !== true || !Array.isArray(payload.result)) {
-    throw new PlatformSessionError(
+  if (!response.ok) {
+    throw cloudflareUpstreamError(
+      502,
+      "Cloudflare account lookup failed",
+      "oauth.account_lookup",
+      response.status,
+      await cloudflareErrorCode(response),
+      elapsedMs(startedAt),
+    );
+  }
+  const payload = (await response.json().catch(() => undefined)) as
+    | CloudflareUserResponse
+    | undefined;
+  if (payload?.success !== true || !Array.isArray(payload.result)) {
+    throw cloudflareUpstreamError(
       502,
       "Cloudflare account response is invalid",
+      "oauth.account_lookup",
+      response.status,
+      undefined,
+      elapsedMs(startedAt),
+      false,
     );
   }
   const accounts = payload.result.flatMap((membership) => {
@@ -562,7 +855,7 @@ function languageModelPromptFromRequest(value: unknown): LanguageModelPrompt | u
   }
   const maxOutputTokens =
     value.options?.maxOutputTokens === undefined
-      ? 256
+      ? MAX_PROMPT_OUTPUT_TOKENS
       : value.options.maxOutputTokens;
   if (
     typeof maxOutputTokens !== "number" ||
@@ -857,7 +1150,7 @@ function accessTokenNeedsRefresh(
   );
 }
 
-function expiredConnectionCookie(request: Request): string {
+export function expiredCloudflareConnectionCookie(request: Request): string {
   return `${CONNECTION_COOKIE_NAME}=; Path=/api/platform/cloudflare; HttpOnly; SameSite=Strict; Max-Age=0${secureAttribute(request)}`;
 }
 
@@ -884,6 +1177,12 @@ function noStoreJson(value: unknown, cookie?: string, status = 200): Response {
 
 function textValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function chatCompletionContent(result: Record<string, unknown>): string | undefined {
+  const choice = Array.isArray(result.choices) ? result.choices[0] : undefined;
+  if (!isRecord(choice) || !isRecord(choice.message)) return undefined;
+  return textValue(choice.message.content);
 }
 
 function isCloudflareAccountId(value: unknown): value is string {

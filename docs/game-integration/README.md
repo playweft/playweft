@@ -323,20 +323,20 @@ approval is remembered per Manifest `id` and may incur usage charges on the
 selected Cloudflare account.
 
 ```js
-const playweft = {
-  languageModel: {
-    prompt(input, options) {
-      return rpcCall("languageModel.prompt", { input, options });
-    },
-  },
-};
+// Copy /sdk/language-model.js from the platform into your game's assets.
+import { createLanguageModelClient } from "./language-model.js";
+
+// Run after receiving the bridge MessagePort. Before replacing the port or
+// tearing down the game, call playweft.languageModel.destroy().
+const playweft = { languageModel: createLanguageModelClient(gamePort) };
+const controller = new AbortController();
 
 const reply = await playweft.languageModel.prompt(
   [
     { role: "system", content: "You are a Mahjong teaching assistant." },
     { role: "user", content: "My hand is … What should I discard?" },
   ],
-  { maxOutputTokens: 256 },
+  { maxOutputTokens: 256, signal: controller.signal },
 );
 console.log(reply);
 ```
@@ -348,6 +348,25 @@ is sent as one `user` message. `options.maxOutputTokens` defaults to 4,096,
 which is also the cap. The resolved `prompt()` value is the response text.
 Streaming, tools, images, and arbitrary model inputs are intentionally
 unsupported in v1.
+
+Call `controller.abort()` to stop waiting and cancel the request. The SDK
+rejects with `signal.reason` (`AbortError` for a default abort), removes its
+listener, and ignores late responses. An already-aborted signal sends no
+request. Requests without a signal work as before. Existing RPC wrappers must
+implement this cancellation protocol or adopt the adapter; passing a signal
+through JSON-RPC does not work.
+
+On the wire, `signal` is omitted. Cancellation is a JSON-RPC notification:
+`{ "jsonrpc": "2.0", "method": "languageModel.cancel", "params": { "requestId": "original-prompt-id" } }`.
+The capability `languageModel.cancel` is advertised by `game.initialize`.
+IDs are scoped to the current bridge connection. Unknown or completed IDs
+and repeated cancellations are ignored. The original request receives
+`REQUEST_CANCELLED` with `retryable: false`. Pending authorization is dismissed,
+queued work is skipped, and active HTTP requests are aborted. Existing consent
+is not revoked. Bridge replacement or teardown cancels its outstanding work.
+Cancellation is best effort once upstream inference starts; it does not
+promise to stop provider computation or prevent charges.
+
 
 The player must connect Cloudflare, grant optional Workers AI access, and pick
 an account in Playweft settings. Stable failure codes include

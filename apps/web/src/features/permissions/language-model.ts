@@ -44,11 +44,13 @@ export function languageModelPromptFromRpcParams(
 
 export async function requestLanguageModel(
   prompt: LanguageModelPromptRequest,
+  signal?: AbortSignal,
 ): Promise<string> {
   try {
-    return (await enqueueLanguageModelRequest(() => promptLanguageModel(prompt)))
+    return (await enqueueLanguageModelRequest(() => promptLanguageModel(prompt, signal), signal))
       .content;
   } catch (reason) {
+    if (signal?.aborted) throw reason;
     if (!(reason instanceof PlatformApiError)) {
       throw new RpcFault(
         JsonRpcErrorCode.PlatformError,
@@ -74,15 +76,25 @@ export async function requestLanguageModel(
   }
 }
 
-function enqueueLanguageModelRequest<T>(request: () => Promise<T>): Promise<T> {
-  const next = queuedLanguageModelRequest.then(request, request);
+export function enqueueLanguageModelRequest<T>(request: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  const run = () => {
+    signal?.throwIfAborted();
+    return request();
+  };
+  const next = queuedLanguageModelRequest.then(run, run);
   // Keep the queue alive after a rejected model request, while returning the
   // original result to its caller.
   queuedLanguageModelRequest = next.then(
     () => undefined,
     () => undefined,
   );
-  return next;
+  if (!signal) return next;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    next.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 function languageModelInput(

@@ -172,12 +172,14 @@ export function selectCloudflareAccount(
 
 export function promptLanguageModel(
   prompt: LanguageModelPromptRequest,
+  signal?: AbortSignal,
 ): Promise<LanguageModelPromptResult> {
   return fetch(endpoint("/api/platform/cloudflare/ai/prompt"), {
     method: "POST",
     credentials: "same-origin",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(prompt),
+    signal,
   }).then(responseJson<LanguageModelPromptResult>);
 }
 

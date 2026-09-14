@@ -22,10 +22,8 @@ function gameManifestSchema(): Plugin {
     name: "playweft-game-manifest-schema",
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
-        const pathname = new URL(
-          request.url ?? "/",
-          "http://localhost",
-        ).pathname;
+        const pathname = new URL(request.url ?? "/", "http://localhost")
+          .pathname;
         if (pathname !== gameManifestSchemaRoute) return next();
         response.statusCode = 200;
         response.setHeader(
@@ -77,8 +75,7 @@ function embeddedFeaturedGameSources(): unknown[] | null {
         typeof source.manifestUrl === "string" &&
         source.manifestUrl.trim().length > 0;
       const hasList =
-        typeof source.listUrl === "string" &&
-        source.listUrl.trim().length > 0;
+        typeof source.listUrl === "string" && source.listUrl.trim().length > 0;
       return hasGame === hasList;
     })
   ) {

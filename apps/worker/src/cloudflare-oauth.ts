@@ -375,12 +375,14 @@ export async function promptCloudflareLanguageModel(
       "Cloudflare Workers AI authorization is required",
     );
   }
+  if (request.signal.aborted) return new Response(null, { status: 499 });
   const startedAt = Date.now();
   let response: Response;
   try {
     response = await fetch(
       `${WORKERS_AI_URL}/${connection.accountId}/ai/run/${TEXT_SMALL_MODEL}`,
       {
+        signal: request.signal,
         method: "POST",
         headers: {
           Authorization: `Bearer ${connection.accessToken}`,
@@ -397,6 +399,7 @@ export async function promptCloudflareLanguageModel(
       },
     );
   } catch {
+    if (request.signal.aborted) return new Response(null, { status: 499 });
     throw cloudflareUpstreamError(
       502,
       "Cloudflare Workers AI request failed",
@@ -417,6 +420,7 @@ export async function promptCloudflareLanguageModel(
     );
   }
   const payload = await response.json().catch(() => undefined);
+  if (request.signal.aborted) return new Response(null, { status: 499 });
   const content =
     isRecord(payload) && isRecord(payload.result)
       ? chatCompletionContent(payload.result)

@@ -15,7 +15,7 @@ export { PLAYWEFT_BRIDGE_VERSION };
 
 export interface RpcHandler {
   allowNotification?: boolean;
-  handle(params: JsonValue | undefined, requestId?: string): JsonValue | Promise<JsonValue>;
+  handle(params: JsonValue | undefined, requestId?: string, signal?: AbortSignal): JsonValue | Promise<JsonValue>;
 }
 
 export type RpcHandlers = Record<string, RpcHandler>;

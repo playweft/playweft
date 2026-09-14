@@ -23,6 +23,7 @@ interface PendingRequest {
   resolve(value: void): void;
   reject(reason: RpcFault): void;
   timeout: number;
+  cleanup?(): void;
 }
 
 /** User-consent half of Playweft's bounded Workers AI text capability. */
@@ -46,6 +47,7 @@ export function useLanguageModelPermission(
       if (!pending) return;
       pendingRef.current = undefined;
       window.clearTimeout(pending.timeout);
+      pending.cleanup?.();
       setPrompt(undefined);
       if (outcome === "allowed") pending.resolve(undefined);
       else pending.reject(outcome);
@@ -53,7 +55,8 @@ export function useLanguageModelPermission(
     [],
   );
 
-  const requestPermission = useCallback((): Promise<void> => {
+  const requestPermission = useCallback((signal?: AbortSignal): Promise<void> => {
+    if (signal?.aborted) return Promise.reject(signal.reason);
     if (pendingRef.current) {
       return Promise.reject(
         languageModelFault(
@@ -88,6 +91,14 @@ export function useLanguageModelPermission(
         reject,
         timeout,
       };
+      const pending = pendingRef.current;
+      const abort = () => {
+        if (pendingRef.current === pending) {
+          finish(languageModelFault("REQUEST_CANCELLED", "Language-model request was cancelled"));
+        }
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      pending.cleanup = () => signal?.removeEventListener("abort", abort);
       setPrompt({
         gameName: identity.gameName,
         origin: identity.gameOrigin!,
@@ -121,6 +132,7 @@ export function useLanguageModelPermission(
       const pending = pendingRef.current;
       if (!pending) return;
       window.clearTimeout(pending.timeout);
+      pending.cleanup?.();
       pendingRef.current = undefined;
       pending.reject(
         languageModelFault(

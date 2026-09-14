@@ -29,10 +29,7 @@ self.addEventListener("message", (event) => {
     return;
   }
   const policy = data?.settings?.appLoadPolicy;
-  if (
-    data?.type !== "playweft:set-settings" ||
-    !isAppLoadPolicy(policy)
-  ) {
+  if (data?.type !== "playweft:set-settings" || !isAppLoadPolicy(policy)) {
     return;
   }
   event.waitUntil(saveSettings(policy));
@@ -42,6 +39,7 @@ registerRoute(
   ({ request, url }) =>
     request.method === "GET" &&
     url.origin === self.location.origin &&
+    !isCloudflareInternalPath(url.pathname) &&
     isApplicationShellRequest(request, url),
   async ({ request }) => {
     const policy = await readPolicy();
@@ -76,6 +74,10 @@ function isApplicationShellRequest(request: Request, url: URL): boolean {
   );
 }
 
+function isCloudflareInternalPath(pathname: string): boolean {
+  return pathname === "/cdn-cgi" || pathname.startsWith("/cdn-cgi/");
+}
+
 async function fetchFromNetwork(request: Request): Promise<Response> {
   return fetch(new Request(request, { cache: "no-store" }));
 }
@@ -91,10 +93,13 @@ async function fromPrecache(
     if (appShell) return appShell;
   }
   if (fallbackToNetwork) return fetch(request);
-  return new Response("The requested application resource is unavailable locally.", {
-    status: 504,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-  });
+  return new Response(
+    "The requested application resource is unavailable locally.",
+    {
+      status: 504,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    },
+  );
 }
 
 async function readPolicy(): Promise<AppLoadPolicy> {
@@ -102,7 +107,9 @@ async function readPolicy(): Promise<AppLoadPolicy> {
     const response = await (
       await caches.open(settingsCacheName)
     ).match(settingsRequest);
-    const settings = response ? (await response.json()) as unknown : undefined;
+    const settings = response
+      ? ((await response.json()) as unknown)
+      : undefined;
     const policy =
       settings !== null && typeof settings === "object"
         ? (settings as { appLoadPolicy?: unknown }).appLoadPolicy

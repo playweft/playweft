@@ -123,6 +123,7 @@ export default function SoloHost({
         "user.getProfile",
         "navigator.clipboard.readText",
         "languageModel.prompt",
+        "languageModel.cancel",
       ]),
     ];
     const detachBridge = attachGameBridge({
@@ -187,7 +188,7 @@ export default function SoloHost({
           },
         },
         "languageModel.prompt": {
-          async handle(params) {
+          async handle(params, _requestId, signal) {
             const prompt = languageModelPromptFromRpcParams(params);
             if (!prompt) {
               throw new RpcFault(
@@ -195,8 +196,9 @@ export default function SoloHost({
                 "languageModel.prompt expects { input, options?: { maxOutputTokens? } }",
               );
             }
-            await languageModel.requestPermission();
-            return requestLanguageModel(prompt);
+            await languageModel.requestPermission(signal);
+            signal?.throwIfAborted();
+            return requestLanguageModel(prompt, signal);
           },
         },
         "window.alert": {

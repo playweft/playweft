@@ -1,3 +1,4 @@
+import { cancellableLanguageModelHandlers } from "./language-model-requests";
 import {
   forwardRef,
   useCallback,
@@ -67,8 +68,10 @@ export function attachGameBridge({
   onPortChange?(port: MessagePort | undefined): void;
 }): () => void {
   let port: MessagePort | undefined;
+  let cancelRequests = () => {};
 
   const closePort = () => {
+    cancelRequests();
     port?.close();
     port = undefined;
     onPortChange?.(undefined);
@@ -89,8 +92,10 @@ export function attachGameBridge({
     const channel = new MessageChannel();
     port = channel.port1;
     onPortChange?.(port);
+    const connection = cancellableLanguageModelHandlers(handlers);
+    cancelRequests = connection.cancel;
     channel.port1.onmessage = (event) => {
-      void dispatchRpcMessage(channel.port1, event.data, handlers);
+      void dispatchRpcMessage(channel.port1, event.data, connection.handlers);
     };
     channel.port1.start();
     frame.current?.contentWindow?.postMessage(

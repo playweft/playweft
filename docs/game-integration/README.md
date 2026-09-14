@@ -273,6 +273,13 @@ A game-rule rejection is a successful RPC result with `accepted: false`.
 
 ## 5. Request protected features at runtime
 
+Game iframes allow accelerometer, gyroscope, and magnetometer access for the game source
+origin, in both solo and multiplayer modes. Games can use browser motion and
+orientation APIs for gravity and compass controls over HTTPS. This delegation does not
+grant user consent: where the browser requires it, request sensor permission
+from a user gesture (such as an “Enable tilt controls” button), and provide
+touch controls when sensors are unavailable or permission is denied.
+
 The Game Manifest does not declare permissions. The iframe is explicitly
 denied direct Async Clipboard access, so a game requests clipboard text only
 when it needs it by calling:

@@ -12,7 +12,8 @@ import {
 } from "@/platform/json-rpc";
 
 const GAME_FRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms";
-const GAME_FRAME_ALLOW = "clipboard-read 'none'; clipboard-write 'none'";
+const GAME_FRAME_ALLOW =
+  "accelerometer 'src'; gyroscope 'src'; magnetometer 'src'; clipboard-read 'none'; clipboard-write 'none'";
 
 interface GameFrameProps {
   src: string;

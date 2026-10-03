@@ -103,6 +103,8 @@
 }
 
 .shelf-game {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
   width: var(--shelf-game-width);
   padding: 16px;
   border: 0;
@@ -178,6 +180,9 @@
 }
 
 .shelf-art img {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
   width: 100%;
   height: 100%;
   border-radius: inherit;

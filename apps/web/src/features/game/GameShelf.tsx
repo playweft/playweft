@@ -396,7 +396,12 @@ function ShelfGameCard({
       >
         <span className="shelf-art">
           {game.icon ? (
-            <img src={game.icon} alt="" referrerPolicy="no-referrer" />
+            <img
+              src={game.icon}
+              alt=""
+              draggable={false}
+              referrerPolicy="no-referrer"
+            />
           ) : (
             <span>{localizeGameName(game, locale).slice(0, 2).toUpperCase()}</span>
           )}

@@ -435,7 +435,7 @@ export class RoomSession {
     if (message.type === "game_changed") {
       void this.loadGame(message.manifestUrl);
     } else if (message.type === "room.presence") this.applyPresence(message);
-    else if (message.type === "snapshot") this.publish(message);
+    else if (message.type === "snapshot" || message.type === "state") this.publish(message);
     else if (message.type === "action-result") {
       const pending = this.pendingActions.get(message.requestId);
       this.pendingActions.delete(message.requestId);

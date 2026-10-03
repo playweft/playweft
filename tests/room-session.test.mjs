@@ -494,6 +494,42 @@ test("failed live sends do not leave a permanently pending request id", async ()
   f.session.dispose();
 });
 
+test("live state broadcasts advance both viewers and are replayed after frame refresh", async () => {
+  const viewers = [fixture({}, { phase: "playing" }), fixture({}, { phase: "playing" })];
+  try {
+    for (const [index, f] of viewers.entries()) {
+      const socket = await f.join();
+      socket.message(snapshot(1));
+      socket.message({
+        ...snapshot(2),
+        type: "state",
+        state: { currentPlayerId: "next", viewerId: `player-${index}` },
+      });
+      socket.message({ ...snapshot(1), type: "state" });
+      assert.equal(f.session.getState().snapshot.version, 2);
+      assert.equal(f.session.getState().snapshot.state.currentPlayerId, "next");
+      assert.equal(f.session.getState().snapshot.state.viewerId, `player-${index}`);
+
+      f.session.refreshGame();
+      const hook = bridgeHarness(f);
+      try {
+        hook.render();
+        const bridge = hook.attachments[0];
+        bridge.connect();
+        await bridge.options.handlers["game.initialize"].handle();
+        f.advance(0);
+        const replay = bridge.messages.find((m) => m.method === "game.state").params;
+        assert.equal(replay.version, 2);
+        assert.equal(replay.state.currentPlayerId, "next");
+      } finally {
+        hook.dispose();
+      }
+    }
+  } finally {
+    for (const f of viewers) f.session.dispose();
+  }
+});
+
 test("snapshot ordering ignores stale versions; return to lobby clears state and rejects late HTTP snapshots", async () => {
   const gate = deferred(),
     f = fixture(

@@ -159,6 +159,7 @@ export class RoomConnection {
       }
       if (
         payload.type === "snapshot" ||
+        payload.type === "state" ||
         payload.type === "room.presence" ||
         payload.type === "game_changed"
       ) {

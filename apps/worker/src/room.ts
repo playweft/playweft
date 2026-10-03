@@ -148,6 +148,7 @@ class RoomHttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -1498,7 +1499,7 @@ export class GameRoom extends DurableObject<Env> {
     if (this.liveMeta) return structuredClone(this.liveMeta);
     const stored = await this.ctx.storage.get<RoomMeta>("roomMeta");
     if (stored === undefined)
-      throw new RoomHttpError(404, "room does not exist");
+      throw new RoomHttpError(404, "room does not exist", "ROOM_NOT_FOUND");
     if (stored.config?.liveRoom) this.liveMeta = structuredClone(stored);
     return stored;
   }
@@ -1945,7 +1946,7 @@ export class GameRoom extends DurableObject<Env> {
 
   private handleError(error: unknown): Response {
     if (error instanceof RoomHttpError)
-      return this.jsonError(error.status, error.message);
+      return this.jsonError(error.status, error.message, error.code);
     if (error instanceof JsonValidationError)
       return this.jsonError(422, error.message);
     if (error instanceof GameRuntimeError)
@@ -1954,8 +1955,8 @@ export class GameRoom extends DurableObject<Env> {
     return this.jsonError(500, "internal room error");
   }
 
-  private jsonError(status: number, error: string): Response {
-    return Response.json({ error }, { status });
+  private jsonError(status: number, error: string, code?: string): Response {
+    return Response.json({ error, ...(code ? { code } : {}) }, { status });
   }
 
   private playerId(request: Request): string {

@@ -27,6 +27,7 @@ export class PlatformApiError extends Error {
     readonly status: number,
     readonly requestId?: string,
     readonly retryable?: boolean,
+    readonly code?: string,
   ) {
     super(message);
     this.name = "PlatformApiError";
@@ -40,7 +41,12 @@ function endpoint(path: string): URL {
 async function responseJson<T>(response: Response): Promise<T> {
   const body = (await response.json()) as
     | T
-    | { error?: string; requestId?: string; retryable?: boolean };
+    | {
+        error?: string;
+        requestId?: string;
+        retryable?: boolean;
+        code?: string;
+      };
   if (!response.ok) {
     const error =
       body !== null && typeof body === "object" && "error" in body
@@ -65,6 +71,12 @@ async function responseJson<T>(response: Response): Promise<T> {
       response.status,
       requestId,
       retryable,
+      body !== null &&
+      typeof body === "object" &&
+      "code" in body &&
+      typeof body.code === "string"
+        ? body.code
+        : undefined,
     );
   }
   return body as T;

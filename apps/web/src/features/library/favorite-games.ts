@@ -2,12 +2,13 @@ import {
   isStoredDiscoveredGame,
   type DiscoveredGame,
 } from "@/features/game/game-manifest";
+import { normalizeLibraryGame } from "./library-game";
 
 const FAVORITE_GAMES_KEY = "playweft:favorite-games:v1";
 const MAX_FAVORITE_GAMES = 8;
 
 export function readFavoriteGames(): DiscoveredGame[] {
-  return uniqueGames(readStoredGames().map(normalizeGame)).slice(
+  return uniqueGames(readStoredGames().map(normalizeLibraryGame)).slice(
     0,
     MAX_FAVORITE_GAMES,
   );
@@ -41,7 +42,7 @@ export function toggleFavoriteGame(game: DiscoveredGame): boolean {
       ? favorites.filter(
           (favorite) => favorite.manifestId !== game.manifestId,
         )
-      : [normalizeGame(game), ...favorites],
+      : [normalizeLibraryGame(game), ...favorites],
   );
   return !isFavorite;
 }
@@ -56,13 +57,6 @@ function readStoredGames(): DiscoveredGame[] {
   } catch {
     return [];
   }
-}
-
-function normalizeGame(game: DiscoveredGame): DiscoveredGame {
-  return {
-    ...game,
-    url: new URL(game.url, window.location.origin).toString(),
-  };
 }
 
 function uniqueGames(games: DiscoveredGame[]): DiscoveredGame[] {

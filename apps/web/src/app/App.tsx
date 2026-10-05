@@ -5,8 +5,12 @@ import Home from "@/features/home/Home";
 import RoomHost from "@/features/room/RoomHost";
 import SoloHost from "@/features/game/SoloHost";
 import UpdateToast from "@/components/UpdateToast";
-import { gameLaunchPath } from "@/features/game/game-launch-link";
-import { gameUrlFromExternalLaunch, saveRecentGame } from "@/features/game/game-launch";
+import {
+  gameLaunchPath,
+  gameModeFromExternalLaunch,
+  gameUrlFromExternalLaunch,
+} from "@/features/game/game-launch-link";
+import { saveRecentGame } from "@/features/library/recent-games";
 import type { DiscoveredGame as RecentGame } from "@/features/game/game-manifest";
 import { useI18n } from "@/app/i18n";
 import {
@@ -39,14 +43,29 @@ export default function App() {
   const handledExternalGameUrl = useRef<string | undefined>(undefined);
   const soloGameRef = useRef<RecentGame | undefined>(undefined);
   const soloExitTimer = useRef<number | undefined>(undefined);
-  soloGameRef.current = soloGame;
   const path = new URL(location, window.location.origin).pathname;
   const externalGameUrl = gameUrlFromExternalLaunch(location);
+  const externalGameMode = gameModeFromExternalLaunch(location);
+  // soloGame caches a discovered Manifest; the URL decides which view is active.
+  const activeSoloGame =
+    externalGameMode === "solo" && soloGame &&
+    location === gameLaunchPath(soloGame.manifestUrl, "solo")
+      ? soloGame
+      : undefined;
+  const visibleSoloGame = soloClosing ? soloGame : activeSoloGame;
+  soloGameRef.current = activeSoloGame;
 
   useEffect(() => {
     const onPopState = () => {
-      setLocation(readAppLocation());
-      if (!soloGameRef.current) return;
+      entryGeneration.current += 1;
+      handledExternalGameUrl.current = undefined;
+      setEntryStatus(undefined);
+      const nextLocation = readAppLocation();
+      setLocation(nextLocation);
+      if (
+        !soloGameRef.current ||
+        nextLocation === gameLaunchPath(soloGameRef.current.manifestUrl, "solo")
+      ) return;
       setSoloClosing(true);
       window.clearTimeout(soloExitTimer.current);
       const duration = window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -108,22 +127,26 @@ export default function App() {
     return new Promise((resolve) => identityWaiters.current.push(resolve));
   }, []);
 
-  const navigate = useCallback((nextPath: string) => {
-    window.history.pushState({}, "", nextPath);
+  const navigate = useCallback((nextPath: string, replace = false) => {
+    entryGeneration.current += 1;
+    handledExternalGameUrl.current = undefined;
+    setEntryStatus(undefined);
+    window.clearTimeout(soloExitTimer.current);
+    setSoloClosing(false);
+    if (replace) window.history.replaceState({}, "", nextPath);
+    else window.history.pushState({}, "", nextPath);
     setLocation(readAppLocation());
   }, []);
   const openSoloGame = useCallback((game: RecentGame) => {
     void prepareGameOrientation(game.orientation);
+    const nextPath = gameLaunchPath(game.manifestUrl, "solo");
+    if (nextPath !== readAppLocation()) {
+      navigate(nextPath, Boolean(gameUrlFromExternalLaunch(readAppLocation())));
+    }
     window.clearTimeout(soloExitTimer.current);
     setSoloClosing(false);
-    const nextPath = gameLaunchPath(game.manifestUrl);
-    if (gameUrlFromExternalLaunch(readAppLocation())) {
-      window.history.replaceState({}, "", "/");
-    }
-    window.history.pushState({ playweftView: "solo" }, "", nextPath);
-    setLocation(readAppLocation());
     setSoloGame(game);
-  }, []);
+  }, [navigate]);
   const claimExternalGameUrl = useCallback((url: string) => {
     if (handledExternalGameUrl.current === url) return false;
     handledExternalGameUrl.current = url;
@@ -157,7 +180,7 @@ export default function App() {
     entryGeneration.current += 1;
     setEntryStatus(undefined);
     setSoloGame(undefined);
-    navigate("/");
+    navigate("/", true);
   }, [navigate]);
 
   const overlayStatus = entryStatus;
@@ -166,7 +189,7 @@ export default function App() {
     pwaUpdate.loadPolicy === "update-prompt" &&
     path === "/" &&
     !externalGameUrl &&
-    !soloGame &&
+    !visibleSoloGame &&
     !overlayStatus;
 
   if (roomId) {
@@ -176,7 +199,7 @@ export default function App() {
         identityReady={identityReady}
         nickname={nickname}
         roomId={roomId}
-        onBack={() => navigate("/")}
+        onBack={() => navigate("/", true)}
         onGameDiscovered={saveRecentGame}
         onNicknameChange={changeNickname}
       />
@@ -186,12 +209,14 @@ export default function App() {
   return (
     <>
       <div
-        aria-hidden={soloGame ? true : undefined}
-        inert={soloGame ? true : undefined}
+        aria-hidden={visibleSoloGame ? true : undefined}
+        inert={visibleSoloGame ? true : undefined}
       >
         <Home
-          externalGameUrl={soloGame ? undefined : externalGameUrl}
-          suppressGameShelves={Boolean(externalGameUrl || soloGame)}
+          key={location}
+          externalGameUrl={visibleSoloGame ? undefined : externalGameUrl}
+          externalGameMode={externalGameMode}
+          suppressGameShelves={Boolean(externalGameUrl || visibleSoloGame)}
           nickname={nickname}
           waitForIdentity={waitForIdentity}
           onNavigate={navigate}
@@ -202,12 +227,13 @@ export default function App() {
           onNicknameChange={changeNickname}
         />
       </div>
-      {soloGame && (
+      {visibleSoloGame && (
         <SoloHost
           closing={soloClosing}
-          game={soloGame}
+          key={visibleSoloGame.manifestUrl}
+          game={visibleSoloGame}
           nickname={nickname}
-          onBack={() => window.history.back()}
+          onBack={() => navigate("/", true)}
         />
       )}
       {overlayStatus && (

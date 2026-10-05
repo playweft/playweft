@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Armchair, Check, Crown, MoreHorizontal } from "lucide-react";
+import { Armchair, Check, CircleUserRound, Crown, MoreHorizontal } from "lucide-react";
 import { useI18n } from "@/app/i18n";
 import type { RoomControls } from "./useRoomControls";
 
@@ -93,7 +93,7 @@ export default function RoomSeats({ controls }: { controls: RoomControls }) {
                     referrerPolicy="no-referrer"
                   />
                 ) : (
-                  <>P{seat}</>
+                  <CircleUserRound className="player-avatar-placeholder" aria-hidden="true" />
                 )}
                 {!isHost && (
                   <span

@@ -23,7 +23,7 @@ import {
   userProfileFieldsFromRpcParams,
   useUserProfileAccess,
 } from "@/features/permissions/UserProfilePrompt";
-import { isFavoriteGame, toggleFavoriteGame } from "@/features/game/favorite-games";
+import { isFavoriteGame, toggleFavoriteGame } from "@/features/library/favorite-games";
 import type { DiscoveredGame as RecentGame, LoadedGame } from "@/features/game/game-manifest";
 import { localizeGameDescription, localizeGameName, useI18n } from "@/app/i18n";
 import {

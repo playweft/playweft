@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import Dialog from "@/components/Dialog";
-import type { ShelfGame } from "@/features/game/GameShelf";
+import type { DiscoveredGame } from "@/features/game/game-manifest";
 import { localizeGameName, useI18n } from "@/app/i18n";
-import { roomIdFromInput } from "@/features/game/game-launch";
+import { roomIdFromInput } from "@/features/room/room-code";
 
 interface LaunchChoiceDialogProps {
-  game: ShelfGame;
+  game: DiscoveredGame;
   roomCode: string;
   onRoomCodeChange(value: string): void;
   onClose(): void;
@@ -55,28 +55,34 @@ export default function LaunchChoiceDialog({
           }`}
         >
           <div className="launch-choice-menu" aria-hidden={joinRoomOpen}>
-            <button type="button" disabled={joinRoomOpen} onClick={onPlaySolo}>
-              <span>{t("playSolo")}</span>
-              <ChevronRight aria-hidden="true" />
-            </button>
-            <hr className="launch-choice-divider" />
-            <button
-              type="button"
-              disabled={joinRoomOpen}
-              onClick={onCreateRoom}
-            >
-              <span>{t("createRoom")}</span>
-              <ChevronRight aria-hidden="true" />
-            </button>
-            <hr className="launch-choice-divider" />
-            <button
-              type="button"
-              disabled={joinRoomOpen}
-              onClick={() => setJoinRoomOpen(true)}
-            >
-              <span>{t("joinRoom")}</span>
-              <ChevronRight aria-hidden="true" />
-            </button>
+            {game.modes.includes("solo") && (
+              <button type="button" disabled={joinRoomOpen} onClick={onPlaySolo}>
+                <span>{t("playSolo")}</span>
+                <ChevronRight aria-hidden="true" />
+              </button>
+            )}
+            {game.modes.includes("room") && (
+              <>
+                {game.modes.includes("solo") && <hr className="launch-choice-divider" />}
+                <button
+                  type="button"
+                  disabled={joinRoomOpen}
+                  onClick={onCreateRoom}
+                >
+                  <span>{t("createRoom")}</span>
+                  <ChevronRight aria-hidden="true" />
+                </button>
+                <hr className="launch-choice-divider" />
+                <button
+                  type="button"
+                  disabled={joinRoomOpen}
+                  onClick={() => setJoinRoomOpen(true)}
+                >
+                  <span>{t("joinRoom")}</span>
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              </>
+            )}
           </div>
           <div className="launch-choice-join-panel" aria-hidden={!joinRoomOpen}>
             <form

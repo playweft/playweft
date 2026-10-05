@@ -1,9 +1,9 @@
 import { useState } from "react";
 import Dialog from "@/components/Dialog";
-import { useFeaturedGames, type FeaturedGame } from "@/features/game/featured-games";
+import { useFeaturedGames, type FeaturedGame } from "@/features/library/featured-games";
 import type { DiscoveredGame as RecentGame } from "@/features/game/game-manifest";
 import { localizeGameName, useI18n } from "@/app/i18n";
-import { readRecentGames } from "@/features/game/recent-games";
+import { readRecentGames } from "@/features/library/recent-games";
 
 interface ChangeGameDialogProps {
   onClose(): void;

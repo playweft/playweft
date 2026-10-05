@@ -3,7 +3,7 @@ import { useI18n, localizeGameDescription, localizeGameName } from "@/app/i18n";
 import {
   isFavoriteGame,
   toggleFavoriteGame,
-} from "@/features/game/favorite-games";
+} from "@/features/library/favorite-games";
 import {
   prepareGameOrientation,
   releaseGameFullscreen,

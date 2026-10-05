@@ -1,14 +1,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Info, Star, StarOff, Trash2 } from "lucide-react";
-import type { FeaturedGame } from "@/features/game/featured-games";
 import Menu, { type MenuHandle, type MenuPosition } from "@/components/Menu";
-import type { DiscoveredGame as RecentGame } from "@/features/game/game-manifest";
+import type { DiscoveredGame } from "@/features/game/game-manifest";
 import { localizeGameName, useI18n } from "@/app/i18n";
 
-type MenuGame = RecentGame | FeaturedGame;
-
 interface GameMenuProps {
-  game: MenuGame;
+  game: DiscoveredGame;
   anchor?: HTMLElement;
   position?: MenuPosition;
   isFavorite: boolean;

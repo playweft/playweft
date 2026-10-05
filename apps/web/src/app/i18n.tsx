@@ -191,6 +191,7 @@ const english = {
   unexpectedError: "Unexpected error",
   enterFullGameUrl:
     "Enter a full game base or Manifest URL, including https://.",
+  gameModeUnavailable: "This game does not support the requested mode. Choose an available mode.",
   gameBridgeUnavailable: "This URL does not expose the Playweft game bridge.",
   gameInitializationMissing:
     "This game did not complete Playweft game.initialize.",
@@ -299,7 +300,7 @@ const chineseSimplified: TranslationDictionary = {
   playersToStart: "{{count}} 人即可开始",
   joinSeat: "加入座位 {{seat}}",
   moveToSeat: "移至座位 {{seat}}",
-  sitHere: "坐在这里",
+  sitHere: "换座",
   you: "你",
   ready: "准备就绪",
   notReady: "未准备",
@@ -355,6 +356,7 @@ const chineseSimplified: TranslationDictionary = {
   dismissError: "关闭错误提示",
   unexpectedError: "发生未知错误",
   enterFullGameUrl: "请输入完整的游戏基础 URL 或 Manifest URL，包括 https://。",
+  gameModeUnavailable: "这个游戏不支持链接指定的模式，请选择可用的进入方式。",
   gameBridgeUnavailable: "该 URL 未提供 Playweft 游戏桥接。",
   gameInitializationMissing: "该游戏没有完成 Playweft game.initialize。",
   liveConnectionFailed: "与平台的实时连接失败",

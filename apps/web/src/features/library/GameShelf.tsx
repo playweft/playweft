@@ -25,12 +25,11 @@ import {
   type HTMLAttributes,
   type TouchEvent as ReactTouchEvent,
 } from "react";
-import type { FeaturedGame } from "@/features/game/featured-games";
-import type { DiscoveredGame as RecentGame } from "@/features/game/game-manifest";
+import type { DiscoveredGame } from "@/features/game/game-manifest";
 import { localizeGameName, useI18n } from "@/app/i18n";
 import type { MenuPosition } from "@/components/Menu";
 
-export type ShelfGame = RecentGame | FeaturedGame;
+export type ShelfGame = DiscoveredGame;
 export type GameShelfKind = "favorite" | "recent" | "recommended";
 export type ShelfGamePhase = "entering" | "exiting";
 

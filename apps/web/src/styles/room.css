@@ -474,6 +474,11 @@ main.room-host {
   object-fit: cover;
 }
 
+.player-avatar-placeholder {
+  width: 60%;
+  height: 60%;
+}
+
 .player-avatar-wrap {
   position: relative;
   display: grid;

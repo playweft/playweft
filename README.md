@@ -138,6 +138,43 @@ metadata. The room Durable Object
 stores only the Manifest URL, fixed package identity, Lua configuration and player limits, game
 state, the room creator, and opaque room-scoped player membership.
 
+## Web feature modules
+
+The web client separates the game library from game execution:
+
+- `features/library`: game shelves and menus, recommendations, favorites,
+  recent games, and stored game URL normalization.
+- `features/game`: Manifest discovery and validation, launch links, game
+  information and help, iframe RPC, viewport controls, and solo execution.
+- `features/home`: homepage layout and coordination of game and room entry,
+  including launch choices and unsupported URL feedback.
+- `features/room`: room codes, lobby membership, connections, and match
+  lifecycle, including the room-specific iframe bridge.
+
+Library and entry UI use the `DiscoveredGame` model from `game-manifest`.
+Favorites and recent games keep their existing browser storage keys; moving
+their modules does not require a data migration. Shared game information and
+help remain in `game` because both the library and running games use them.
+
+## Game URLs and browser history
+
+`/?game=example.com/demo/` is the shareable game entry. Games supporting both
+solo and room play show a mode choice; games supporting one mode enter it
+directly. Selecting a game on the homepage pushes this entry onto history.
+Choosing solo play replaces it with `/?game=example.com/demo/&mode=solo`;
+creating or joining a room from the entry replaces it with `/r/:roomId`.
+Entering a room code directly on the homepage pushes the room URL instead.
+
+Refreshing or navigating forward to a solo URL restores solo mode after
+checking the Manifest. This restores the mode, not game progress; progress
+still depends on the game's own persistence. Game sharing always generates
+the generic URL without a mode. Explicit unsupported modes show an error
+and the available entry choices without loading a game iframe.
+
+Browser Back returns to the page before the game entry. The platform's solo
+exit button and room termination replace the current entry with the homepage.
+Pending entry work is invalidated when the URL changes.
+
 ## Recommended games
 
 Recommended games can be supplied at deployment time without changing tracked

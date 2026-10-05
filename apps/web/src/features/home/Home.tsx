@@ -1,41 +1,45 @@
 import { useEffect, useMemo, useState } from "react";
 import { createGuestSession, createRoom } from "@/platform/platform-api";
-import { useFeaturedGames } from "@/features/game/featured-games";
+import { useFeaturedGames } from "@/features/library/featured-games";
 import ErrorToast from "@/components/ErrorToast";
 import GameHelpDialog from "@/features/game/GameHelpDialog";
 import GameInfoPanel from "@/features/game/GameInfoPanel";
-import GameMenu from "@/features/game/GameMenu";
+import GameMenu from "@/features/library/GameMenu";
 import GameShelf, {
   type GameShelfKind,
   type ShelfGame,
   type ShelfGamePhase,
-} from "@/features/game/GameShelf";
-import LaunchChoiceDialog from "@/features/game/LaunchChoiceDialog";
+} from "@/features/library/GameShelf";
+import LaunchChoiceDialog from "@/features/home/LaunchChoiceDialog";
 import PlayerProfileMenu from "@/features/account/PlayerProfileMenu";
-import UnsupportedGameDialog from "@/features/game/UnsupportedGameDialog";
+import UnsupportedGameDialog from "@/features/home/UnsupportedGameDialog";
 import {
   UnsupportedGameUrlError,
   probeGame,
-  roomIdFromInput,
-  saveRecentGame,
-  supportedModes,
-  toRecentGame,
-} from "@/features/game/game-launch";
+} from "@/features/game/game-discovery";
+import { gameLaunchPath } from "@/features/game/game-launch-link";
+import { roomIdFromInput } from "@/features/room/room-code";
+import { normalizeLibraryGame } from "@/features/library/library-game";
 import {
   persistFavoriteGames,
   readFavoriteGames,
-} from "@/features/game/favorite-games";
+} from "@/features/library/favorite-games";
 import type { DiscoveredGame as RecentGame, GameMode } from "@/features/game/game-manifest";
 import { localizeGameDescription, localizeGameName, useI18n } from "@/app/i18n";
 import type { MenuPosition } from "@/components/Menu";
-import { persistRecentGames, readRecentGames } from "@/features/game/recent-games";
+import {
+  persistRecentGames,
+  readRecentGames,
+  saveRecentGame,
+} from "@/features/library/recent-games";
 
 interface HomeProps {
   externalGameUrl?: string;
+  externalGameMode?: string;
   suppressGameShelves: boolean;
   nickname: string;
   waitForIdentity(): Promise<string>;
-  onNavigate(path: string): void;
+  onNavigate(path: string, replace?: boolean): void;
   onBeginEntry(): () => boolean;
   onClaimExternalGameUrl(url: string): boolean;
   onEntryStatus(status: string | undefined): void;
@@ -44,12 +48,14 @@ interface HomeProps {
 }
 
 interface LaunchFromValueOptions {
-  preferSolo?: boolean;
+  fromRoute?: boolean;
+  mode?: string;
   populateInputOnFailure?: boolean;
 }
 
 export default function Home({
   externalGameUrl,
+  externalGameMode,
   suppressGameShelves,
   nickname,
   waitForIdentity,
@@ -121,7 +127,7 @@ export default function Home({
       await createGuestSession(resolvedNickname);
       if (cancelled()) return;
       onEntryStatus(t("loadingGame"));
-      onNavigate(`/r/${roomId}`);
+      onNavigate(`/r/${roomId}`, Boolean(externalGameUrl));
     } catch (reason) {
       if (cancelled()) return;
       onEntryStatus(undefined);
@@ -141,7 +147,7 @@ export default function Home({
       if (cancelled()) return;
       rememberGame(game);
       onEntryStatus(t("loadingGame"));
-      onNavigate(`/r/${room.roomId}`);
+      onNavigate(`/r/${room.roomId}`, Boolean(externalGameUrl));
     } catch (reason) {
       if (cancelled()) return;
       onEntryStatus(undefined);
@@ -152,20 +158,20 @@ export default function Home({
   const launchGame = (
     game: ShelfGame,
     mode?: GameMode,
-    preferSolo = false,
   ) => {
-    const recentGame = toRecentGame(game);
-    const modes = supportedModes(recentGame);
+    const recentGame = normalizeLibraryGame(game);
+    const modes = recentGame.modes;
+    if (mode && !modes.includes(mode)) {
+      setError(t("gameModeUnavailable"));
+      setLaunchChoice(recentGame);
+      return;
+    }
     if (mode === "solo") {
       playSolo(recentGame);
       return;
     }
     if (mode === "room") {
       void createRoomForGame(recentGame);
-      return;
-    }
-    if (preferSolo && modes.includes("solo")) {
-      playSolo(recentGame);
       return;
     }
     if (modes.includes("solo") && modes.includes("room")) {
@@ -183,7 +189,8 @@ export default function Home({
   const launchFromValue = async (
     value: string,
     {
-      preferSolo = false,
+      fromRoute = false,
+      mode,
       populateInputOnFailure = false,
     }: LaunchFromValueOptions = {},
   ) => {
@@ -200,7 +207,16 @@ export default function Home({
       const game = await probeGame(trimmed, onEntryStatus, t);
       if (cancelled()) return;
       onEntryStatus(undefined);
-      launchGame(game, undefined, preferSolo);
+      if (!fromRoute) {
+        onNavigate(gameLaunchPath(game.manifestUrl));
+        return;
+      }
+      if (mode !== undefined && (mode !== "solo" || !game.modes.includes("solo"))) {
+        setError(t("gameModeUnavailable"));
+        setLaunchChoice(game);
+        return;
+      }
+      launchGame(game, mode === "solo" ? "solo" : undefined);
     } catch (reason) {
       if (cancelled()) return;
       onEntryStatus(undefined);
@@ -214,12 +230,16 @@ export default function Home({
   };
 
   useEffect(() => {
-    if (!externalGameUrl || !onClaimExternalGameUrl(externalGameUrl)) return;
+    if (
+      !externalGameUrl ||
+      !onClaimExternalGameUrl(`${externalGameMode ?? "choose"}:${externalGameUrl}`)
+    ) return;
     void launchFromValue(externalGameUrl, {
-      preferSolo: true,
+      fromRoute: true,
+      mode: externalGameMode,
       populateInputOnFailure: true,
     });
-  }, [externalGameUrl, onClaimExternalGameUrl]);
+  }, [externalGameUrl, externalGameMode, onClaimExternalGameUrl]);
 
   const openGameMenu = (
     game: ShelfGame,
@@ -231,7 +251,7 @@ export default function Home({
   };
 
   const reorderFavoriteGames = (games: ShelfGame[]) => {
-    const next = persistFavoriteGames(games.map(toRecentGame));
+    const next = persistFavoriteGames(games.map(normalizeLibraryGame));
     setFavoriteGames(next);
     setRenderedFavoriteGames(next);
     setFavoriteGamePhases({});
@@ -251,7 +271,7 @@ export default function Home({
     }
 
     const nextFavoriteGames = persistFavoriteGames([
-      toRecentGame(game),
+      normalizeLibraryGame(game),
       ...favoriteGames.filter((item) => item.manifestId !== game.manifestId),
     ]);
     setFavoriteGames(nextFavoriteGames);
@@ -376,7 +396,7 @@ export default function Home({
                   return phase ? `shelf-game-${phase}` : "";
                 }}
                 onItemAnimationEnd={finishFavoriteAnimation}
-                onSelect={launchGame}
+                onSelect={(game) => onNavigate(gameLaunchPath(game.manifestUrl))}
                 onOpenMenu={openGameMenu}
                 onReorder={
                   Object.keys(favoriteGamePhases).length === 0
@@ -401,7 +421,7 @@ export default function Home({
                   return phase ? `shelf-game-${phase}` : "";
                 }}
                 onItemAnimationEnd={finishRecentAnimation}
-                onSelect={launchGame}
+                onSelect={(game) => onNavigate(gameLaunchPath(game.manifestUrl))}
                 onOpenMenu={openGameMenu}
               />
             )}
@@ -414,7 +434,7 @@ export default function Home({
                   ? gameMenu.game.manifestId
                   : undefined
               }
-              onSelect={launchGame}
+              onSelect={(game) => onNavigate(gameLaunchPath(game.manifestUrl))}
               onOpenMenu={openGameMenu}
             />
           </div>
@@ -467,17 +487,15 @@ export default function Home({
           game={launchChoice}
           roomCode={launchChoiceRoomCode}
           onRoomCodeChange={setLaunchChoiceRoomCode}
-          onClose={() => setLaunchChoice(undefined)}
+          onClose={() => onNavigate("/", true)}
           onPlaySolo={() => {
             setLaunchChoice(undefined);
             launchGame(launchChoice, "solo");
           }}
           onCreateRoom={() => {
-            setLaunchChoice(undefined);
             launchGame(launchChoice, "room");
           }}
           onJoinRoom={(roomId) => {
-            setLaunchChoice(undefined);
             void joinRoomById(roomId);
           }}
         />

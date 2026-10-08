@@ -19,6 +19,7 @@ import {
 } from "@/features/game/game-discovery";
 import { gameLaunchPath } from "@/features/game/game-launch-link";
 import { roomIdFromInput } from "@/features/room/room-code";
+import { parseLaunchInput } from "./launch-input";
 import { normalizeLibraryGame } from "@/features/library/library-game";
 import {
   persistFavoriteGames,
@@ -99,7 +100,7 @@ export default function Home({
     () => new Set(favoriteGames.map((game) => game.manifestId)),
     [favoriteGames],
   );
-  const roomIdInput = roomIdFromInput(gameUrl);
+  const roomIdInput = parseLaunchInput(gameUrl).kind === "room";
   const rememberGame = (game: RecentGame) => {
     saveRecentGame(game);
     const nextRecentGames = readRecentGames();
@@ -195,6 +196,17 @@ export default function Home({
     }: LaunchFromValueOptions = {},
   ) => {
     const trimmed = value.trim();
+    if (!fromRoute) {
+      const input = parseLaunchInput(trimmed);
+      if (input.kind === "room") {
+        void joinRoomById(input.roomId);
+        return;
+      }
+      if (input.kind === "game-link") {
+        onNavigate(input.path);
+        return;
+      }
+    }
     const roomId = roomIdFromInput(trimmed);
     if (roomId) {
       void joinRoomById(roomId);

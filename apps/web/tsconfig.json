@@ -11,15 +11,18 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "types": ["vite/client", "vite-plugin-pwa/react", "vite-plugin-pwa/vanillajs"]
+    "types": [
+      "vite/client",
+      "vite-plugin-pwa/react",
+      "vite-plugin-pwa/vanillajs"
+    ]
   },
   "include": ["src", "vite.config.ts"]
 }

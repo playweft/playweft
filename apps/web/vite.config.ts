@@ -16,6 +16,34 @@ const gameManifestSchemaPath = fileURLToPath(
 );
 const gameManifestSchemaRoute = "/schemas/game-manifest-v1.json";
 
+function shareImageOrigin(): Plugin {
+  let origin = "";
+  return {
+    name: "playweft-share-image-origin",
+    configResolved(config) {
+      const configured = config.env.VITE_SITE_ORIGIN?.trim();
+      if (!configured) return;
+      const url = new URL(configured);
+      if (
+        !["http:", "https:"].includes(url.protocol) ||
+        url.username || url.password ||
+        url.pathname !== "/" || url.search || url.hash
+      ) {
+        throw new Error("VITE_SITE_ORIGIN must be an HTTP(S) origin, such as https://play.example.com");
+      }
+      origin = url.origin;
+    },
+    transformIndexHtml(html) {
+      return origin
+        ? html.replaceAll(
+            'content="/icons/pwa-512.png"',
+            `content="${origin}/icons/pwa-512.png"`,
+          )
+        : html;
+    },
+  };
+}
+
 function gameManifestSchema(): Plugin {
   const readSchema = () => readFileSync(gameManifestSchemaPath, "utf8");
   return {
@@ -94,6 +122,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    shareImageOrigin(),
     gameManifestSchema(),
     VitePWA({
       strategies: "injectManifest",

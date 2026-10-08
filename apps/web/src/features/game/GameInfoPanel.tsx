@@ -66,9 +66,18 @@ export default function GameInfoPanel({
   const afterClose = useRef<(() => void) | undefined>(undefined);
   const copyResetTimer = useRef<number | undefined>(undefined);
   const dialog = useRef<HTMLDialogElement>(null);
-  let gameSourceHost = url;
+  let gameSourceUrl = manifestUrl ?? url;
+  let gameSourceHost = gameSourceUrl;
   try {
-    gameSourceHost = new URL(url).host;
+    const source = new URL(gameSourceUrl);
+    if (
+      source.pathname.endsWith("/playweft.json") &&
+      !source.search &&
+      !source.hash
+    ) {
+      gameSourceUrl = new URL(".", source).href;
+    }
+    gameSourceHost = source.host;
   } catch {
     // Keep the original value if a caller supplies a non-URL label.
   }
@@ -146,9 +155,9 @@ export default function GameInfoPanel({
       className={`game-info-layer${landscapeCompatibilityRotation ? " game-info-layer-landscape-compatibility" : ""}`}
       style={
         landscapeCompatibilityRotation
-          ? {
+          ? ({
               "--game-viewport-rotation": landscapeCompatibilityRotation,
-            } as CSSProperties
+            } as CSSProperties)
           : undefined
       }
       aria-labelledby="game-info-title"
@@ -223,7 +232,9 @@ export default function GameInfoPanel({
                 <span className="game-info-url-tooltip-label">
                   {t("gameSource")}
                 </span>
-                <span className="game-info-url-tooltip-value">{url}</span>
+                <span className="game-info-url-tooltip-value">
+                  {gameSourceUrl}
+                </span>
               </span>
             </button>
           </div>

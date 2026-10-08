@@ -165,6 +165,11 @@ Choosing solo play replaces it with `/?game=example.com/demo/&mode=solo`;
 creating or joining a room from the entry replaces it with `/r/:roomId`.
 Entering a room code directly on the homepage pushes the room URL instead.
 
+The homepage input also accepts full room and game-sharing links from the
+current `window.location.origin`. Room links join directly; game links keep
+their mode and query parameters. Pasting either pushes one history entry.
+Other URLs follow the existing game base/Manifest discovery flow.
+
 Refreshing or navigating forward to a solo URL restores solo mode after
 checking the Manifest. This restores the mode, not game progress; progress
 still depends on the game's own persistence. Game sharing always generates
@@ -184,6 +189,16 @@ source. Copy the example to the ignored local configuration and edit it:
 cp apps/web/featured-games.example.json apps/web/featured-games.local.json
 npm run deploy:platform
 ```
+
+Sharing images use `/icons/pwa-512.png` by default. To emit absolute image
+URLs for link previews, set `VITE_SITE_ORIGIN` in the frontend environment
+or when building, for example:
+
+```sh
+VITE_SITE_ORIGIN=https://play.example.com npm run deploy:platform
+```
+
+The value must be an HTTP(S) origin without a path, query, or fragment.
 
 Vite reads `apps/web/featured-games.local.json` while building and embeds its
 contents into the frontend bundle. The file is not uploaded separately and

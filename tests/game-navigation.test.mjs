@@ -57,7 +57,8 @@ function find(tree, type) {
 const game = { manifestUrl: "https://game.example/demo/playweft.json", url: "https://game.example/demo/index.html",
   manifestId: "https://game.example/demo/", name: "Demo", modes: ["solo", "room"] };
 function fixture(initial = "/", selectedGame = game, overrides = {}) {
-  const history = ["https://platform.example/", new URL(initial, "https://platform.example").href];
+  const origin = overrides.origin ?? "https://platform.example";
+  const history = [`${origin}/`, new URL(initial, origin).href];
   let cursor = 1, pops = new Set(), homeKey, homeRenderer, homeModule, tree, homeTree;
   const window = {
     location: new URL(history[cursor]),
@@ -75,9 +76,11 @@ function fixture(initial = "/", selectedGame = game, overrides = {}) {
     "react/jsx-runtime": { jsx, jsxs: jsx },
     "@/app/i18n": { useI18n: () => ({ locale: "en", t: key => key }) },
     "@/features/game/game-launch-link": links,
+    "@/features/room/room-code": { roomIdFromInput: value => value.trim().toUpperCase() === "FZCC" ? "FZCC" : undefined },
     "@/features/library/recent-games": { readRecentGames: () => [], persistRecentGames: () => [], saveRecentGame() {} },
     "@/platform/platform-api": { getPlatformSession: async () => ({}), createGuestSession: async () => {}, createRoom: overrides.createRoom ?? (async () => ({ roomId: "FZCC" })) },
   };
+  common["./launch-input"] = load("features/home/launch-input.ts", common, window);
   const App = load("app/App.tsx", { ...common, react: appRenderer.react,
     "@/app/use-pwa-update": { usePwaUpdate: () => ({}) },
     "@/features/account/player-profile": { readGuestPlayerNickname: () => "Player" },
@@ -89,7 +92,6 @@ function fixture(initial = "/", selectedGame = game, overrides = {}) {
       "@/features/library/featured-games": { useFeaturedGames: () => [selectedGame] },
       "@/features/library/favorite-games": { readFavoriteGames: () => [] },
       "@/features/library/library-game": { normalizeLibraryGame: game => game },
-      "@/features/room/room-code": { roomIdFromInput: value => value.trim().toUpperCase() === "FZCC" ? "FZCC" : undefined },
       "@/features/game/game-discovery": { probeGame: overrides.probeGame ?? (async () => selectedGame), UnsupportedGameUrlError: class extends Error {} },
     }, window).default;
   }
@@ -182,4 +184,65 @@ test("room creation failures retain the shared entry and choice for retry", asyn
   assert.equal(find(f.home, "ErrorToast").props.message, "network unavailable");
   find(f.home, "LaunchChoiceDialog").props.onCreateRoom(); await f.settle();
   assert.equal(f.window.location.pathname, "/r/FZCC"); assert.equal(f.history.length, 2); f.dispose();
+});
+
+test("pasted room links join directly using the current origin and push one history entry", async () => {
+  for (const origin of ["https://preview.example", "http://localhost:9133"]) {
+    const f = fixture("/", game, { origin, probeGame: () => { throw new Error("Room links must not probe a Manifest"); } });
+    await f.settle();
+    find(f.home, "input").props.onChange({ target: { value: ` ${origin}/r/fzcc/?invite=1 ` } }); await f.settle();
+    const form = find(f.home, "form");
+    assert.equal(find(form, "button").props.children, "joinRoom");
+    form.props.onSubmit({ preventDefault() {} }); await f.settle();
+    assert.ok(find(f.tree, "RoomHost")); assert.equal(f.window.location.pathname, "/r/FZCC"); assert.equal(f.history.length, 3);
+    await f.back(); assert.equal(f.window.location.pathname, "/"); f.dispose();
+  }
+});
+
+test("pasted game share and solo links preserve mode and load the embedded game source", async () => {
+  for (const mode of [undefined, "solo"]) {
+    const probed = [];
+    const f = fixture("/", game, { origin: "https://preview.example", probeGame: async value => { probed.push(value); return game; } });
+    await f.settle();
+    const path = f.links.gameLaunchPath(game.manifestUrl, mode);
+    find(f.home, "input").props.onChange({ target: { value: `${f.window.location.origin}${path}` } }); await f.settle();
+    find(f.home, "form").props.onSubmit({ preventDefault() {} }); await f.settle();
+    assert.deepEqual(probed, ["https://game.example/demo/"]);
+    assert.equal(f.history.length, 3);
+    if (mode === "solo") assert.ok(find(f.tree, "SoloHost"));
+    else {
+      assert.ok(find(f.home, "LaunchChoiceDialog")); assert.equal(find(f.tree, "SoloHost"), undefined);
+      find(f.home, "LaunchChoiceDialog").props.onPlaySolo(); await f.settle();
+      assert.ok(find(f.tree, "SoloHost")); assert.equal(f.history.length, 3);
+    }
+    await f.back(); assert.equal(f.window.location.pathname + f.window.location.search, "/"); f.dispose();
+  }
+});
+
+test("foreign URLs and ordinary game sources are not mistaken for platform links", async () => {
+  for (const value of [
+    "https://foreign.example/r/FZCC",
+    "https://foreign.example/?game=game.example/demo/&mode=solo",
+    "https://game.example/demo/",
+    "https://game.example/demo/custom.json?token=a%26b",
+  ]) {
+    const probed = [];
+    const f = fixture("/", game, { probeGame: async source => { probed.push(source); return game; } }); await f.settle();
+    find(f.home, "input").props.onChange({ target: { value } }); await f.settle();
+    find(f.home, "form").props.onSubmit({ preventDefault() {} }); await f.settle();
+    assert.equal(probed[0], value); assert.ok(find(f.home, "LaunchChoiceDialog"));
+    assert.equal(find(f.tree, "RoomHost"), undefined); assert.equal(find(f.tree, "SoloHost"), undefined); f.dispose();
+  }
+});
+
+test("pasted share links preserve encoded Manifest query parameters and validate unsupported modes", async () => {
+  const queryGame = { ...game, manifestUrl: "https://game.example/custom.json?token=a%26b" };
+  const probed = [];
+  const f = fixture("/", queryGame, { probeGame: async source => { probed.push(source); return queryGame; } }); await f.settle();
+  const path = `${f.links.gameLaunchPath(queryGame.manifestUrl)}&mode=unknown`;
+  find(f.home, "input").props.onChange({ target: { value: `${f.window.location.origin}${path}` } }); await f.settle();
+  find(f.home, "form").props.onSubmit({ preventDefault() {} }); await f.settle();
+  assert.deepEqual(probed, [queryGame.manifestUrl]); assert.equal(f.history.length, 3);
+  assert.ok(find(f.home, "LaunchChoiceDialog")); assert.equal(find(f.tree, "SoloHost"), undefined);
+  assert.equal(find(f.home, "ErrorToast").props.message, "gameModeUnavailable"); f.dispose();
 });

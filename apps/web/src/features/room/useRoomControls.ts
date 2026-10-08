@@ -89,7 +89,16 @@ export function useRoomControls(
   );
 
   const setError = (error?: string) => session?.setError(error);
-  const copyInvite = async () => {
+  const shareInvite = async () => {
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share({ url: window.location.href });
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
+        setError(t("inviteShareFailed"));
+      }
+      return;
+    }
     try {
       await navigator.clipboard.writeText(window.location.href);
       setCopied(true);
@@ -135,7 +144,7 @@ export function useRoomControls(
     spectatorCount: lobby?.spectators.length ?? 0,
     playerCapacity: lobby?.maxPlayers ?? 0,
     copied,
-    copyInvite,
+    shareInvite,
     starting,
     start,
     startUnavailableReason,

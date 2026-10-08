@@ -39,7 +39,7 @@ export default function RoomLobby({
     setReady,
     joinFirstOpenSeat,
     copied,
-    copyInvite,
+    shareInvite,
     phase,
     gameHelpHref,
     setGameInfoOpen,
@@ -177,8 +177,8 @@ export default function RoomLobby({
               {t("joinRoom")}
             </button>
           )}
-          <button onClick={() => void copyInvite()}>
-            {copied ? t("inviteLinkCopied") : t("copyInviteLink")}
+          <button type="button" onClick={() => void shareInvite()}>
+            {copied ? t("inviteLinkCopied") : t("shareRoomAction")}
           </button>
         </div>
       </>

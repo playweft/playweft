@@ -98,8 +98,8 @@ const english = {
   save: "Save",
   createRoom: "Create room",
   joinRoom: "Join room",
-  gameUrlOrRoomCode: "Game base URL or room code",
-  pasteGameUrlOrRoomCode: "Paste a game base URL or room code",
+  gameUrlOrRoomCode: "Game link, room link or room code",
+  pasteGameUrlOrRoomCode: "Paste a game or room link, or enter a room code",
   favorites: "Favorites",
   recentlyPlayed: "Recently played",
   recommended: "Recommended",
@@ -156,7 +156,7 @@ const english = {
   waitingForPlayersReady: "Wait for all seated players to get ready.",
   startGame: "Start game",
   cancelReady: "Cancel ready",
-  copyInviteLink: "Copy invite link",
+  shareRoomAction: "Share",
   inviteLinkCopied: "Invite link copied",
   returnToRoom: "Return to room",
   leaveRoom: "Leave room?",
@@ -202,6 +202,7 @@ const english = {
   liveConnectionNotReady: "Live connection is not ready",
   inviteCopyFailed:
     "Could not copy automatically. Copy the invite link from the address bar.",
+  inviteShareFailed: "Could not share the room link. Please try again.",
 } as const;
 
 export type TranslationKey = keyof typeof english;
@@ -265,8 +266,8 @@ const chineseSimplified: TranslationDictionary = {
   save: "保存",
   createRoom: "创建房间",
   joinRoom: "加入房间",
-  gameUrlOrRoomCode: "游戏基础 URL 或房间码",
-  pasteGameUrlOrRoomCode: "粘贴游戏基础 URL 或输入房间码",
+  gameUrlOrRoomCode: "游戏链接、房间链接或房间码",
+  pasteGameUrlOrRoomCode: "粘贴游戏或房间链接，或输入房间码",
   favorites: "收藏",
   recentlyPlayed: "最近玩过",
   recommended: "推荐游戏",
@@ -323,7 +324,7 @@ const chineseSimplified: TranslationDictionary = {
   waitingForPlayersReady: "还有玩家尚未准备。",
   startGame: "开始游戏",
   cancelReady: "取消准备",
-  copyInviteLink: "复制邀请链接",
+  shareRoomAction: "分享",
   inviteLinkCopied: "邀请链接已复制",
   returnToRoom: "返回房间",
   leaveRoom: "离开房间？",
@@ -365,6 +366,7 @@ const chineseSimplified: TranslationDictionary = {
   gameNotStarted: "游戏尚未开始",
   liveConnectionNotReady: "实时连接尚未就绪",
   inviteCopyFailed: "无法自动复制，请从地址栏复制邀请链接。",
+  inviteShareFailed: "无法分享房间链接，请重试。",
 };
 
 const resources: Record<Locale, TranslationDictionary> = {

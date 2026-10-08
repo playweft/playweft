@@ -2,12 +2,25 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useState,
   type ReactNode,
 } from "react";
 
 export const locales = ["en", "zh-CN"] as const;
 export type Locale = (typeof locales)[number];
+const LOCALE_STORAGE_KEY = "playweft:locale:v1";
+
+export function localeDisplayName(locale: Locale): string {
+  try {
+    return (
+      new Intl.DisplayNames([locale], { type: "language" }).of(locale) ?? locale
+    );
+  } catch {
+    return locale;
+  }
+}
 export type InterpolationValues = Record<string, string | number>;
 export interface GameTranslation {
   name?: string;
@@ -191,7 +204,8 @@ const english = {
   unexpectedError: "Unexpected error",
   enterFullGameUrl:
     "Enter a full game base or Manifest URL, including https://.",
-  gameModeUnavailable: "This game does not support the requested mode. Choose an available mode.",
+  gameModeUnavailable:
+    "This game does not support the requested mode. Choose an available mode.",
   gameBridgeUnavailable: "This URL does not expose the Playweft game bridge.",
   gameInitializationMissing:
     "This game did not complete Playweft game.initialize.",
@@ -418,19 +432,43 @@ export function localizeGameDescription(
 
 interface I18nContextValue {
   locale: Locale;
+  setLocale(locale: Locale): void;
   t: Translator;
 }
 
 const I18nContext = createContext<I18nContextValue | undefined>(undefined);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const locale = resolveLocale(navigator.language);
+  const [locale, updateLocale] = useState<Locale>(() => {
+    try {
+      const saved = window.localStorage.getItem(LOCALE_STORAGE_KEY);
+      if (saved === "en" || saved === "zh-CN") return saved;
+    } catch {
+      // Browser language remains available when local storage is blocked.
+    }
+    return resolveLocale(navigator.language);
+  });
+  const setLocale = useCallback((nextLocale: Locale) => {
+    if (!locales.includes(nextLocale)) return;
+    updateLocale(nextLocale);
+    try {
+      window.localStorage.setItem(LOCALE_STORAGE_KEY, nextLocale);
+    } catch {
+      // Language selection still applies for the current page.
+    }
+  }, []);
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
   const t = useCallback(
     (key: TranslationKey, values?: InterpolationValues) =>
       translate(locale, key, values),
     [locale],
   );
-  const value = useMemo(() => ({ locale, t }), [locale, t]);
+  const value = useMemo(
+    () => ({ locale, setLocale, t }),
+    [locale, setLocale, t],
+  );
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

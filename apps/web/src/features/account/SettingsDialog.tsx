@@ -14,10 +14,10 @@ import {
   type CloudflareStatus,
 } from "@/platform/platform-api";
 import ErrorToast from "@/components/ErrorToast";
-import { useI18n } from "@/app/i18n";
+import { localeDisplayName, locales, useI18n, type Locale } from "@/app/i18n";
 
 export default function SettingsDialog({ onBack }: { onBack(): void }) {
-  const { t } = useI18n();
+  const { locale, setLocale, t } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null);
   const [closing, setClosing] = useState(false);
   const [loadPolicy, setLoadPolicy] = useState(readAppLoadPolicy);
@@ -28,8 +28,7 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
   const [cloudflareOAuthFailed, setCloudflareOAuthFailed] = useState(
     cloudflareOAuthFailureFromLocation,
   );
-  const [cloudflareOAuthStarting, setCloudflareOAuthStarting] =
-    useState(false);
+  const [cloudflareOAuthStarting, setCloudflareOAuthStarting] = useState(false);
   const [cloudflareAccounts, setCloudflareAccounts] = useState<
     CloudflareAccountsResponse | undefined
   >();
@@ -163,10 +162,33 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
       </header>
       <main className="settings-dialog-scroll">
         <div className="settings-dialog-content">
+          <section className="settings-card" aria-label={t("language")}>
+            <label className="settings-list-item" htmlFor="settings-language">
+              <span>{t("language")}</span>
+              <select
+                id="settings-language"
+                name="locale"
+                aria-label={t("language")}
+                value={locale}
+                onChange={(event) => setLocale(event.target.value as Locale)}
+              >
+                {locales.map((value) => (
+                  <option key={value} value={value} lang={value}>
+                    {localeDisplayName(value)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </section>
           <section className="settings-card" aria-label={t("appLoadingMode")}>
-            <label className="settings-list-item">
+            <label
+              className="settings-list-item"
+              htmlFor="settings-app-load-policy"
+            >
               <span>{t("appLoadingMode")}</span>
               <select
+                id="settings-app-load-policy"
+                name="appLoadPolicy"
                 aria-label={t("appLoadingMode")}
                 disabled={applyingPolicy}
                 value={loadPolicy}
@@ -182,10 +204,7 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
             </label>
           </section>
           {cloudflareStatus?.enabled && (
-            <section
-              className="settings-card"
-              aria-label="Cloudflare"
-            >
+            <section className="settings-card" aria-label="Cloudflare">
               {cloudflareStatus.connected ? (
                 <>
                   <div className="settings-list-item">
@@ -193,8 +212,7 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
                     <span
                       className="settings-list-value"
                       title={
-                        cloudflareStatus.displayName ??
-                        cloudflareStatus.email
+                        cloudflareStatus.displayName ?? cloudflareStatus.email
                       }
                     >
                       {cloudflareStatus.displayName ??
@@ -215,9 +233,14 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
                     <>
                       {cloudflareAccounts &&
                         cloudflareAccounts.accounts.length > 0 && (
-                          <label className="settings-list-item">
+                          <label
+                            className="settings-list-item"
+                            htmlFor="settings-cloudflare-account"
+                          >
                             <span>{t("cloudflareAccount")}</span>
                             <select
+                              id="settings-cloudflare-account"
+                              name="cloudflareAccountId"
                               aria-label={t("cloudflareAccount")}
                               disabled={updatingCloudflareAccount}
                               value={cloudflareAccounts.accountId ?? ""}
@@ -274,5 +297,7 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
 }
 
 function cloudflareOAuthFailureFromLocation(): boolean {
-  return new URL(window.location.href).searchParams.get("cloudflare") === "failed";
+  return (
+    new URL(window.location.href).searchParams.get("cloudflare") === "failed"
+  );
 }

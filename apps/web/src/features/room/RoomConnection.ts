@@ -183,7 +183,7 @@ export class RoomConnection {
       this.clearHeartbeat();
       this.clearProbe();
       this.options.onInterrupted();
-      if (event.code === 4004) {
+      if (event.code === 4003 || event.code === 4004) {
         this.options.onClosed();
         return;
       }

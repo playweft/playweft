@@ -344,7 +344,15 @@ export function createRoom(manifestUrl: string): Promise<CreatedRoom> {
 export function getRoomLaunch(roomId: string): Promise<RoomLaunch> {
   return fetch(endpoint(`/api/rooms/${encodeURIComponent(roomId)}/launch`), {
     credentials: "same-origin",
+    cache: "no-store",
   }).then(responseJson<RoomLaunch>);
+}
+
+export function getRoomMembership(roomId: string): Promise<{ selfId: string }> {
+  return fetch(endpoint(`/api/rooms/${encodeURIComponent(roomId)}/membership`), {
+    credentials: "same-origin",
+    cache: "no-store",
+  }).then(responseJson<{ selfId: string }>);
 }
 
 export function changeRoomGame(

@@ -11,6 +11,16 @@ export function isRoomNotFound(reason: unknown): boolean {
   );
 }
 
+export function isRoomMemberNotFound(reason: unknown): boolean {
+  return (
+    reason instanceof PlatformApiError &&
+    reason.status === 404 &&
+    (reason.code === "ROOM_MEMBER_NOT_FOUND" ||
+      (reason.code === undefined &&
+        reason.message === "player is not in this room"))
+  );
+}
+
 export function errorMessage(reason: unknown, fallback: string): string {
   return reason instanceof Error ? reason.message : fallback;
 }

@@ -193,6 +193,11 @@ export class GameRoom extends DurableObject<Env> {
           return Response.json(await this.enqueue(() => this.create(request)));
         case "GET /launch":
           return Response.json(await this.enqueue(() => this.launch()));
+        case "GET /membership":
+          return Response.json(
+            await this.enqueue(() => this.membership(request)),
+            { headers: { "Cache-Control": "no-store" } },
+          );
         case "PUT /game":
           return Response.json(
             await this.enqueue(() => this.changeGame(request)),
@@ -806,7 +811,12 @@ export class GameRoom extends DurableObject<Env> {
       this.ownerPlayerId(),
     ]);
     const member = members[playerId];
-    if (!member) throw new RoomHttpError(404, "player is not in this room");
+    if (!member)
+      throw new RoomHttpError(
+        404,
+        "player is not in this room",
+        "ROOM_MEMBER_NOT_FOUND",
+      );
     const ownerLeft = playerId === ownerPlayerId;
     if (Object.keys(members).length === 1) {
       this.closePlayerSockets(playerId);
@@ -1360,6 +1370,18 @@ export class GameRoom extends DurableObject<Env> {
     if ((await this.phase()) !== "playing")
       throw new RoomHttpError(409, "the game has not started");
     return this.snapshot(actorId);
+  }
+
+  private async membership(request: Request): Promise<{ selfId: string }> {
+    const playerId = this.playerId(request);
+    const member = (await this.members())[playerId];
+    if (!member)
+      throw new RoomHttpError(
+        404,
+        "player is not in this room",
+        "ROOM_MEMBER_NOT_FOUND",
+      );
+    return { selfId: member.actorId };
   }
 
   private async connectWebSocket(request: Request): Promise<Response> {

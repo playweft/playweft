@@ -210,6 +210,7 @@ function fixture(overrides = {}, { liveRoom = true, phase = "lobby" } = {}) {
     getRoomLaunch: async () => ({
       manifestUrl: "https://game.example/playweft.json",
     }),
+    getRoomMembership: async () => ({ selfId: "self" }),
     loadGameManifest: async () => loadedGame("game", liveRoom),
     manifestUrlFromInput: (url) => url,
     initializeRoom: async () => {
@@ -311,13 +312,13 @@ for (const action of ["leave", "dissolve"]) {
       assert.equal(f.sockets.length, 1);
     }
   });
-  test(`${action}: network, permission and player-not-found errors retain the room`, async () => {
+  test(`${action}: network, permission and unrelated player errors retain the room`, async () => {
     const f = fixture();
     await f.join();
     for (const error of [
       new Error("offline"),
       new f.PlatformApiError("forbidden", 403),
-      new f.PlatformApiError("player is not in this room", 404),
+      ...(action === "dissolve" ? [new f.PlatformApiError("player is not in this room", 404)] : []),
       new f.PlatformApiError(
         "room does not exist",
         404,
@@ -338,18 +339,54 @@ for (const action of ["leave", "dissolve"]) {
   });
 }
 
-test("server dissolution or close code uses the same end path", async () => {
-  for (const signal of ["message", "close"]) {
+test("leaving after removal ends once for typed and legacy missing-member responses without reconnecting", async () => {
+  for (const typed of [true, false]) {
+    const f = fixture();
+    const socket = await f.join();
+    f.api.leaveRoom = async () => {
+      throw new f.PlatformApiError(
+        typed ? "你已不在房间中" : "player is not in this room",
+        404, undefined, undefined, typed ? "ROOM_MEMBER_NOT_FOUND" : undefined,
+      );
+    };
+    socket.close();
+    await f.session.leave();
+    await f.session.leave();
+    assert.equal(f.session.getState().lifecycle, "ended");
+    assert.equal(f.counts.ended, 1);
+    assert.equal(f.timers.size, 0);
+    assert.equal(f.listeners.size, 0);
+    f.resume(); f.advance(60_000);
+    assert.equal(f.sockets.length, 1);
+  }
+});
+
+test("missing-member errors cannot turn dissolve or unrelated 404 failures into successful exits", async () => {
+  const f = fixture(); await f.join();
+  f.api.dissolveRoom = async () => {
+    throw new f.PlatformApiError("你已不在房间中", 404, undefined, undefined, "ROOM_MEMBER_NOT_FOUND");
+  };
+  await f.session.dissolve();
+  assert.equal(f.counts.ended, 0);
+  f.api.leaveRoom = async () => { throw new f.PlatformApiError("unrelated resource missing", 404); };
+  await f.session.leave();
+  assert.equal(f.session.getState().lifecycle, "joined");
+  assert.equal(f.counts.ended, 0); f.session.dispose();
+});
+
+test("server dissolution and removal close codes use the same end path", async () => {
+  for (const signal of ["message", 4003, 4004]) {
     const f = fixture();
     const socket = await f.join();
     if (signal === "message")
       socket.message({ type: "room_dissolved", error: "ended" });
-    else socket.close(4004);
+    else socket.close(signal);
     assert.equal(f.session.getState().lifecycle, "ended");
     assert.equal(f.counts.ended, 1);
     assert.equal(f.timers.size, 0);
     assert.equal(f.listeners.size, 0);
     f.resume();
+    f.advance(60_000);
     assert.equal(f.sockets.length, 1);
   }
 });
@@ -882,6 +919,34 @@ test("backend marks missing rooms with a typed error while unrelated 404 errors 
   const unknown = await room.fetch(new Request("https://room.example/unknown"));
   assert.equal(unknown.status, 404);
   assert.equal((await unknown.json()).code, undefined);
+  const missingMembership = await room.fetch(new Request("https://room.example/membership", {
+    headers: { "X-Playweft-Player-Id": "self" },
+  }));
+  assert.equal(missingMembership.status, 404);
+  assert.equal((await missingMembership.json()).code, "ROOM_NOT_FOUND");
+  room.launch = async () => ({});
+  room.phase = async () => "lobby";
+  room.members = async () => ({ host: { actorId: "host-actor" } });
+  room.ownerPlayerId = async () => "host";
+  const removed = await room.fetch(new Request("https://room.example/leave", {
+    method: "POST", headers: { "X-Playweft-Player-Id": "removed" },
+  }));
+  assert.equal(removed.status, 404);
+  assert.deepEqual(await removed.json(), {
+    error: "player is not in this room", code: "ROOM_MEMBER_NOT_FOUND",
+  });
+  const missingMember = await room.fetch(new Request("https://room.example/membership", {
+    headers: { "X-Playweft-Player-Id": "removed" },
+  }));
+  assert.equal(missingMember.status, 404);
+  assert.equal((await missingMember.json()).code, "ROOM_MEMBER_NOT_FOUND");
+  const member = await room.fetch(new Request("https://room.example/membership", {
+    headers: { "X-Playweft-Player-Id": "host" },
+  }));
+  assert.equal(member.status, 200);
+  assert.equal(member.headers.get("Cache-Control"), "no-store");
+  assert.deepEqual(await member.json(), { selfId: "host-actor" });
+  assert.equal((await room.fetch(new Request("https://room.example/membership"))).status, 401);
 });
 
 test("nickname changed during entry is synchronized after joining", async () => {
@@ -903,4 +968,114 @@ test("nickname changed during entry is synchronized after joining", async () => 
     "the nickname is updated once after initial membership",
   );
   f.session.dispose();
+});
+
+test("resume or failed socket recovery confirms a dissolved room over HTTP and ends without further retries", async () => {
+  for (const trigger of ['resume', 'close']) {
+    for (const typed of [true, false]) {
+      const f = fixture(); const socket = await f.join();
+      f.api.getRoomMembership = async () => {
+        throw new f.PlatformApiError(typed ? '房间已解散' : 'room does not exist', 404,
+          undefined, undefined, typed ? 'ROOM_NOT_FOUND' : undefined);
+      };
+      if (trigger === 'resume') f.resume(); else socket.close();
+      await flush();
+      assert.equal(f.session.getState().lifecycle, 'ended');
+      assert.equal(f.counts.ended, 1);
+      assert.equal(f.timers.size, 0); assert.equal(f.listeners.size, 0);
+      const count = f.sockets.length; f.resume(); f.advance(60_000);
+      assert.equal(f.sockets.length, count);
+    }
+  }
+});
+
+test("room checks retain sessions on network, authentication and unrelated 404 failures; later recovery can end", async () => {
+  const f = fixture(); await f.join();
+  for (const reason of [new Error('offline'), new f.PlatformApiError('unauthorized', 401),
+    new f.PlatformApiError('forbidden', 403), new f.PlatformApiError('other resource missing', 404)]) {
+    f.api.getRoomMembership = async () => { throw reason; };
+    f.resume(); await flush();
+    assert.equal(f.session.getState().lifecycle, 'joined'); assert.equal(f.counts.ended, 0);
+  }
+  f.api.getRoomMembership = async () => { throw new f.PlatformApiError('room does not exist', 404); };
+  f.sockets.at(-1).close(); await flush();
+  assert.equal(f.counts.ended, 1); assert.equal(f.timers.size, 0);
+});
+
+test("recovery checks coalesce without rejoining or initializing an existing room", async () => {
+  const f = fixture(); const socket = await f.join(); const pending = deferred(); let checks = 0;
+  f.api.getRoomMembership = () => { checks++; return pending.promise; };
+  f.resume(); f.resume(); f.sockets.at(-1).close(); await flush();
+  assert.equal(checks, 1);
+  pending.resolve({selfId: 'self'}); await flush();
+  assert.equal(f.session.getState().lifecycle, 'joined'); assert.equal(f.counts.ended, 0);
+  assert.equal(f.counts.initialize, 1); assert.equal(f.counts.join, 1);
+  f.advance(2_000); await flush();
+  assert.equal(checks, 2); socket.message({type: 'room_dissolved', error: 'old'});
+  assert.equal(f.counts.ended, 0); f.session.dispose();
+});
+
+test("late room-check errors cannot navigate after unmount or a game change", async () => {
+  for (const transition of ['dispose', 'game-change']) {
+    const f = fixture(); await f.join(); const pending = deferred();
+    f.api.getRoomMembership = () => pending.promise;
+    f.resume(); await flush();
+    if (transition === 'dispose') f.session.dispose();
+    else {
+      f.sockets.at(-1).message({type: 'game_changed', manifestUrl: 'https://game.example/next/playweft.json'});
+      await flush();
+      await f.session.activate();
+    }
+    pending.reject(new f.PlatformApiError('room does not exist', 404)); await flush();
+    assert.equal(f.counts.ended, 0);
+    if (transition === 'game-change') assert.equal(f.session.getState().lifecycle, 'joined');
+    f.session.dispose();
+  }
+});
+
+test("recovery detects removal even if the room still exists and the kick close notification was missed", async () => {
+  for (const trigger of ['resume', 'close']) {
+    const f = fixture(); const socket = await f.join();
+    f.api.getRoomMembership = async () => { throw new f.PlatformApiError('removed', 404, undefined, undefined, 'ROOM_MEMBER_NOT_FOUND'); };
+    if (trigger === 'resume') f.resume(); else socket.close(1006);
+    await flush();
+    assert.equal(f.counts.ended, 1); assert.equal(f.session.getState().lifecycle, 'ended');
+    assert.equal(f.timers.size, 0); assert.equal(f.listeners.size, 0);
+    const count = f.sockets.length; f.resume(); f.advance(60_000);
+    assert.equal(f.sockets.length, count);
+  }
+});
+
+test("room operations consistently end on ROOM_NOT_FOUND without treating other errors as room termination", async () => {
+  for (const [method, apiMethod, args] of [
+    ['chooseSeat', 'setRoomSeat', [2]], ['setReady', 'setPlayerReady', []],
+    ['start', 'startRoom', []], ['returnToRoom', 'returnRoomToLobby', []],
+    ['changeGame', 'changeRoomGame', ['https://game.example/new/playweft.json']],
+    ['kick', 'kickPlayer', ['other']], ['transferHost', 'transferRoomHost', ['other']],
+    ['shareAvatar', 'setRoomProfileAvatarSharing', [true]],
+    ['action', 'sendAction', ['request', {}]],
+  ]) {
+    for (const missing of [true, false]) {
+      const f = fixture({}, {phase: method === 'action' ? 'playing' : 'lobby', liveRoom: method !== 'action'});
+      await f.join(); await flush();
+      f.api[apiMethod] = async () => { throw new f.PlatformApiError(missing ? 'room missing' : 'forbidden', missing ? 404 : 403,
+        undefined, undefined, missing ? 'ROOM_NOT_FOUND' : undefined); };
+      try { await f.session[method](...args); } catch { /* RPC methods propagate their operation error. */ }
+      assert.equal(f.counts.ended, missing ? 1 : 0, `${method}: end classification`);
+      if (missing) { assert.equal(f.timers.size, 0); assert.equal(f.listeners.size, 0); }
+      else assert.equal(f.session.getState().lifecycle, 'joined');
+      f.session.dispose();
+    }
+  }
+});
+
+test("stale ROOM_NOT_FOUND operation results cannot end a different game session", async () => {
+  const f = fixture(); await f.join(); const pending = deferred();
+  f.api.setRoomSeat = () => pending.promise;
+  const operation = f.session.chooseSeat(2);
+  f.sockets.at(-1).message({type: 'game_changed', manifestUrl: 'https://game.example/next/playweft.json'});
+  await flush(); await f.session.activate();
+  pending.reject(new f.PlatformApiError('room missing', 404, undefined, undefined, 'ROOM_NOT_FOUND'));
+  await operation;
+  assert.equal(f.counts.ended, 0); assert.equal(f.session.getState().lifecycle, 'joined'); f.session.dispose();
 });

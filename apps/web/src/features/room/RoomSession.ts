@@ -15,6 +15,7 @@ import {
   entryFailureFrom,
   errorMessage,
   isRoomNotFound,
+  isRoomMemberNotFound,
   type RoomEntryFailure,
 } from "./room-errors";
 
@@ -41,6 +42,7 @@ export type RoomServices = Pick<
   typeof PlatformApi,
   | "createGuestSession"
   | "getRoomLaunch"
+  | "getRoomMembership"
   | "initializeRoom"
   | "joinRoom"
   | "getPlatformSession"
@@ -93,6 +95,7 @@ export class RoomSession {
   private stopped = false;
   private syncedNickname?: string;
   private nicknameRevision = 0;
+  private checkingRoomGeneration?: number;
   private pendingActions = new Map<
     string,
     { resolve(value: JsonValue): void; reject(reason: unknown): void }
@@ -106,11 +109,14 @@ export class RoomSession {
     this.connection = new RoomConnection({
       createSocket: () => api.connectRoom(roomId),
       onMessage: (message) => this.receive(message),
-      onState: (connection) =>
+      onState: (connection) => {
         this.patch({
           connection,
           ...(connection === "connected" ? { error: undefined } : {}),
-        }),
+        });
+        if (connection === "reconnecting" || connection === "failed")
+          void this.verifyRoomMembership();
+      },
       onInterrupted: () =>
         this.cancelActions(
           "REALTIME_CONNECTION_INTERRUPTED",
@@ -125,7 +131,10 @@ export class RoomSession {
         ),
       onLatency: (latency) => this.patch({ latency }),
       onClosed: () => this.end(),
-      onResume: () => this.patch({ error: undefined }),
+      onResume: () => {
+        this.patch({ error: undefined });
+        void this.verifyRoomMembership();
+      },
     });
   }
 
@@ -208,7 +217,7 @@ export class RoomSession {
       this.patch({ selfId });
       this.applyPresence(presence);
     } catch (reason) {
-      if (current())
+      if (current() && !this.endIfRoomUnavailable(reason, generation))
         this.setError(
           errorMessage(reason, this.options.message("unexpectedError")),
         );
@@ -265,7 +274,7 @@ export class RoomSession {
     });
   }
   leave(): Promise<void> {
-    return this.endVia(() => this.api.leaveRoom(this.roomId));
+    return this.endVia(() => this.api.leaveRoom(this.roomId), true);
   }
   dissolve(): Promise<void> {
     return this.endVia(() => this.api.dissolveRoom(this.roomId));
@@ -284,7 +293,10 @@ export class RoomSession {
     const presence = await this.api.setRoomProfileAvatarSharing(
       this.roomId,
       shared,
-    );
+    ).catch((reason) => {
+      this.endIfRoomUnavailable(reason, generation);
+      throw reason;
+    });
     if (!this.isCurrent(generation))
       throw rpcPlatformFault("ROOM_CLOSED", "The room session was replaced");
     this.applyPresence(presence);
@@ -348,6 +360,8 @@ export class RoomSession {
       if (response.update) this.publish(response.update);
       return actionResultForRpc(response.result);
     } catch (reason) {
+      if (roundGeneration === this.roundGeneration)
+        this.endIfRoomUnavailable(reason, generation);
       throw rpcPlatformFault(
         "ACTION_REJECTED",
         errorMessage(reason, this.options.message("unexpectedError")),
@@ -389,14 +403,52 @@ export class RoomSession {
     this.options.onEnd();
   }
 
-  private async endVia(request: () => Promise<unknown>): Promise<void> {
+  private endIfRoomUnavailable(
+    reason: unknown,
+    generation: number,
+    missingMember = false,
+  ): boolean {
+    if (
+      this.isCurrent(generation) &&
+      (isRoomNotFound(reason) || (missingMember && isRoomMemberNotFound(reason)))
+    ) {
+      this.end();
+      return true;
+    }
+    return false;
+  }
+
+  private async verifyRoomMembership(): Promise<void> {
+    const generation = this.generation;
+    if (
+      this.stopped ||
+      this.state.lifecycle !== "joined" ||
+      this.checkingRoomGeneration === generation
+    ) return;
+    this.checkingRoomGeneration = generation;
+    try {
+      await this.api.getRoomMembership(this.roomId);
+    } catch (reason) {
+      this.endIfRoomUnavailable(reason, generation, true);
+      // Transport, authentication and unrelated errors leave recovery active.
+    } finally {
+      if (this.checkingRoomGeneration === generation)
+        this.checkingRoomGeneration = undefined;
+    }
+  }
+
+  private async endVia(
+    request: () => Promise<unknown>,
+    leaving = false,
+  ): Promise<void> {
     if (this.stopped) return;
     this.setError(undefined);
     try {
       await request();
       this.end();
     } catch (reason) {
-      if (isRoomNotFound(reason)) this.end();
+      if (isRoomNotFound(reason) || (leaving && isRoomMemberNotFound(reason)))
+        this.end();
       else if (!this.stopped)
         this.setError(
           errorMessage(reason, this.options.message("unexpectedError")),
@@ -495,7 +547,8 @@ export class RoomSession {
         session.provider === "x" && Boolean(session.avatarUrl),
       );
       if (this.isCurrent(generation)) this.applyPresence(presence);
-    } catch {
+    } catch (reason) {
+      this.endIfRoomUnavailable(reason, generation);
       /* Avatar sync must not block room entry. */
     }
   }
@@ -526,7 +579,8 @@ export class RoomSession {
     } catch (reason) {
       if (
         this.isCurrent(generation) &&
-        roundGeneration === this.roundGeneration
+        roundGeneration === this.roundGeneration &&
+        !this.endIfRoomUnavailable(reason, generation)
       )
         this.setError(
           errorMessage(reason, this.options.message("unexpectedError")),

@@ -155,6 +155,7 @@ export default {
             changeGame: "PUT /api/rooms/:roomId/game",
             returnToRoom: "POST /api/rooms/:roomId/return-to-room",
             state: "GET /api/rooms/:roomId/state",
+            membership: "GET /api/rooms/:roomId/membership",
             action: "POST /api/rooms/:roomId/actions",
             connect: "GET /api/rooms/:roomId/connect (WebSocket)",
             avatar: "GET /api/rooms/:roomId/avatars/:token",
@@ -183,7 +184,7 @@ export default {
       }
 
       const match =
-        /^\/api\/rooms\/([a-zA-Z0-9_-]{1,128})\/(game|launch|initialize|join|start|leave|seat|ready|profile-avatar|kick|transfer-host|dissolve|return-to-room|state|actions|connect)$/.exec(
+        /^\/api\/rooms\/([a-zA-Z0-9_-]{1,128})\/(game|launch|membership|initialize|join|start|leave|seat|ready|profile-avatar|kick|transfer-host|dissolve|return-to-room|state|actions|connect)$/.exec(
           url.pathname,
         );
       if (!match) return Response.json({ error: "not found" }, { status: 404 });
@@ -199,7 +200,11 @@ export default {
       // makes a freshly redirected room fail before its iframe can load.
       // All mutations and the WebSocket handshake still require an exact
       // platform Origin below.
-      if (endpoint !== "launch" && endpoint !== "state") {
+      if (
+        endpoint !== "launch" &&
+        endpoint !== "state" &&
+        endpoint !== "membership"
+      ) {
         requirePlatformOrigin(request);
       }
       const session = await requirePlatformSession(request, env);

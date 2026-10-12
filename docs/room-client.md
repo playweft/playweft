@@ -36,13 +36,27 @@ revision, so even batched lobby/playing transitions create a fresh iframe.
 - A room route owns one session. Ending or unmounting disposes its connection,
   retry/heartbeat/probe timers, visibility listener and pending live actions.
 - Successful leave/dissolve, a missing room on those operations, a server
-  dissolution notification and socket close code `4004` share one terminal
+  dissolution notification and socket close codes `4003` (removed) / `4004`
+  (room closed) share one terminal
   path. Navigation happens at most once; unmounting alone does not navigate.
 - `ROOM_NOT_FOUND` identifies missing rooms. Older backends remain compatible
-  through the exact `404` / `room does not exist` response. Other 404 errors,
+  through the exact `404` / `room does not exist` response. Room operations
+  during an active session share the terminal path for a confirmed missing
+  room, including seat/ready/start, game changes and HTTP game actions.
+  Leaving also ends
+  the session for `ROOM_MEMBER_NOT_FOUND` or the legacy exact `404` /
+  `player is not in this room` response. This exception does not apply to
+  dissolving the room. Other 404 errors,
   permission errors and network failures retain the room and show an error.
 - Socket callbacks check that their socket is still active before changing any
   timers, state or retry counters. Resuming a disposed session does nothing.
+- Returning to the foreground and reconnecting verify room existence through
+  the uncached HTTP membership endpoint, which also verifies that the caller
+  still belongs to the room without rejoining it. A confirmed missing room
+  or missing member ends the session; network, authentication and unrelated
+  errors retain recovery.
+  Concurrent checks are coalesced, and responses from a previous game or a
+  disposed session cannot navigate.
 - Changing games invalidates old asynchronous work, reloads configuration and
   joins the new game using the same room connection. No old game response may
   replace the new game's state.

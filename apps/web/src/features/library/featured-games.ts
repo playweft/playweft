@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { loadGameManifest, type DiscoveredGame } from "@/features/game/game-manifest";
+import {
+  loadGameManifest,
+  type DiscoveredGame,
+} from "@/features/game/game-manifest";
 import { readAppLoadPolicy } from "@/app/app-load-policy";
 
 export type FeaturedGame = DiscoveredGame;
@@ -23,28 +26,40 @@ const configuredSources = Array.isArray(__PLAYWEFT_FEATURED_GAME_SOURCES__)
 const platformBaseUrl = new URL("/", window.location.href).href;
 
 let featuredGamesPromise: Promise<FeaturedGame[]> | undefined;
+let featuredGames: FeaturedGame[] = [];
+const featuredGameListeners = new Set<(games: FeaturedGame[]) => void>();
 
 export function useFeaturedGames(enabled = true): FeaturedGame[] {
   const [games, setGames] = useState<FeaturedGame[]>([]);
 
   useEffect(() => {
     if (!enabled) return;
-    let cancelled = false;
-    featuredGamesPromise ??= loadFeaturedGames(configuredSources);
-    void featuredGamesPromise.then((loaded) => {
-      if (!cancelled) setGames(loaded);
+    featuredGameListeners.add(setGames);
+    setGames(featuredGames);
+    featuredGamesPromise ??= loadFeaturedGames(configuredSources, (loaded) => {
+      featuredGames = loaded;
+      featuredGameListeners.forEach((listener) => listener(loaded));
     });
     return () => {
-      cancelled = true;
+      featuredGameListeners.delete(setGames);
     };
   }, [enabled]);
 
   return games;
 }
 
-async function loadFeaturedGames(sources: unknown[]): Promise<FeaturedGame[]> {
+async function loadFeaturedGames(
+  sources: unknown[],
+  onUpdate: (games: FeaturedGame[]) => void,
+): Promise<FeaturedGame[]> {
   const visited = new Set<string>();
-  const games = await resolveSources(sources, platformBaseUrl, visited, 0);
+  const games = await resolveSources(
+    sources,
+    platformBaseUrl,
+    visited,
+    0,
+    (loaded) => onUpdate(uniqueGames(loaded)),
+  );
   return uniqueGames(games);
 }
 
@@ -53,36 +68,44 @@ async function resolveSources(
   baseUrl: string,
   visited: Set<string>,
   depth: number,
+  onUpdate: (games: FeaturedGame[]) => void,
 ): Promise<FeaturedGame[]> {
-  const groups = await Promise.all(
-    sources.map(async (source): Promise<FeaturedGame[]> => {
+  // Each configured source owns a slot, independent of completion order.
+  const groups: FeaturedGame[][] = sources.map(() => []);
+  const updateGroup = (index: number, games: FeaturedGame[]) => {
+    groups[index] = games;
+    onUpdate(groups.flat());
+  };
+  await Promise.all(
+    sources.map(async (source, index): Promise<void> => {
       const parsed = parseSource(source, baseUrl);
       if (!parsed) {
         console.warn("Ignoring an invalid featured-game source", source);
-        return [];
+        return;
       }
       if (parsed.kind === "game") {
         try {
-          return [(await loadGameManifest(parsed.url)).game];
+          updateGroup(index, [(await loadGameManifest(parsed.url)).game]);
         } catch (error) {
           console.warn(`Could not discover featured game ${parsed.url}`, error);
-          return [];
         }
+        return;
       }
       if (
         depth >= MAX_LIST_DEPTH ||
         visited.has(parsed.url) ||
         visited.size >= MAX_REMOTE_LISTS
       ) {
-        return [];
+        return;
       }
       visited.add(parsed.url);
       try {
         const nested = await fetchList(new URL(parsed.url));
-        return resolveSources(nested, parsed.url, visited, depth + 1);
+        await resolveSources(nested, parsed.url, visited, depth + 1, (games) =>
+          updateGroup(index, games),
+        );
       } catch (error) {
         console.warn(`Could not load featured-game list ${parsed.url}`, error);
-        return [];
       }
     }),
   );

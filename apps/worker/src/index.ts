@@ -184,17 +184,16 @@ export default {
       }
 
       const match =
-        /^\/api\/rooms\/([a-zA-Z0-9_-]{1,128})\/(game|launch|membership|initialize|join|start|leave|seat|ready|profile-avatar|kick|transfer-host|dissolve|return-to-room|state|actions|connect)$/.exec(
+        /^\/api\/rooms\/([a-zA-Z0-9_-]{1,128})\/(game|launch|membership|local-runtime|connection-mode|initialize|join|start|leave|seat|ready|profile-avatar|kick|transfer-host|dissolve|return-to-room|state|actions|connect)$/.exec(
           url.pathname,
         );
       if (!match) return Response.json({ error: "not found" }, { status: 404 });
 
       const roomId = match[1]!;
       const endpoint = match[2]!;
-      const forwarded = new Request(
-        new URL(`/${endpoint}`, request.url),
-        request,
-      );
+      const forwardedUrl = new URL(`/${endpoint}`, request.url);
+      forwardedUrl.search = url.search;
+      const forwarded = new Request(forwardedUrl, request);
       // These are authenticated, read-only requests. Browsers are allowed to
       // omit (or vary) Origin on a same-origin GET, so enforcing Origin here
       // makes a freshly redirected room fail before its iframe can load.
@@ -203,7 +202,8 @@ export default {
       if (
         endpoint !== "launch" &&
         endpoint !== "state" &&
-        endpoint !== "membership"
+        endpoint !== "membership" &&
+        endpoint !== "local-runtime"
       ) {
         requirePlatformOrigin(request);
       }

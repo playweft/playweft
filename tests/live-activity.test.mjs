@@ -6,6 +6,11 @@ import ts from 'typescript';
 
 const source = await readFile(new URL('../apps/worker/src/room.ts', import.meta.url), 'utf8');
 const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
+const timerSource = await readFile(new URL('../packages/runtime-core/src/timers.ts', import.meta.url), 'utf8');
+const timerExports = {};
+vm.runInNewContext(ts.transpileModule(timerSource, {compilerOptions: {target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS}}).outputText, {
+  exports: timerExports, require: () => ({}),
+});
 function fixture(liveRoom) {
   let now = 1000, alarm = null, puts = 0, alarms = 0;
   const stored = new Map([['roomMeta', { roomId:'room', manifestUrl:'https://example.com/game.json', ownerPlayerId:'p1', phase:'playing', presenceRevision:0,
@@ -22,7 +27,8 @@ function fixture(liveRoom) {
     Date: class extends Date { static now() { return now; } },
     require(name) {
       if (name === 'cloudflare:workers') return { DurableObject: class { constructor(ctx) { this.ctx = ctx; } } };
-      // These game-runtime imports are unused by presence and storage paths under test.
+      if (name === '@playweft/runtime-core') return timerExports;
+      // Other game-runtime imports are unused by these paths.
       return {};
     },
   });

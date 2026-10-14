@@ -4,6 +4,7 @@ import type {
   RoomPresence,
   RoomSnapshot,
 } from "@playweft/game-protocol";
+import type { PeerEnvelope } from "./peer/LocalHostRoom";
 
 export type RoomConnectionState =
   | "idle"
@@ -13,6 +14,7 @@ export type RoomConnectionState =
   | "failed"
   | "closed";
 export type RoomMessage =
+  | PeerEnvelope
   | RoomSnapshot
   | RoomPresence
   | RoomActionResult
@@ -26,7 +28,7 @@ interface ConnectionOptions {
   onState(state: RoomConnectionState): void;
   onInterrupted(): void;
   onError(restorationFailed: boolean): void;
-  onLatency(rttMs: number): void;
+  onLatency(rttMs: number | undefined): void;
   onClosed(): void;
   onResume(): void;
 }
@@ -82,10 +84,10 @@ export class RoomConnection {
       this.probe = {
         ackId,
         sentAt: now,
-        timeout: window.setTimeout(
-          () => this.clearProbe(),
-          LATENCY_PROBE_TIMEOUT_MS,
-        ),
+        timeout: window.setTimeout(() => {
+          this.clearProbe();
+          this.options.onLatency(undefined);
+        }, LATENCY_PROBE_TIMEOUT_MS),
       };
     }
     try {

@@ -11,11 +11,14 @@ import {
   type RoomPlayer,
   type RoomSnapshot,
   type RoomStart,
+  type RoomLocalRuntime,
 } from "@playweft/game-protocol";
 import {
   GameRuntimeError,
+  applyTimerOps, assertTimerSupport, compareTimers, initialTimerBudget, consumeTimerBudget,
+  projectSnapshot, setupContext, roomActor, actionContext,
+  type RoomTimer, type TimerBudget, type GameActor,
   type GameRuntime,
-  type GameTimerOperation,
 } from "@playweft/runtime-core";
 import type { Env } from "./env";
 import {
@@ -39,13 +42,6 @@ const HOST_OFFLINE_TIMEOUT_MS = 45_000;
 const LIVE_ACTIVITY_FLUSH_MS = 1_000;
 const MAX_PLAYERS = 32;
 const GAME_PROTOCOL_VERSION = 1;
-const MAX_PENDING_TIMERS = 32;
-const MAX_TIMER_PAYLOAD_BYTES = 8 * 1024;
-const MAX_TIMER_PAYLOAD_TOTAL_BYTES = 32 * 1024;
-const TIMER_BUDGET_CAPACITY = 16;
-const TIMER_BUDGET_REFILL_MS = 5_000;
-const MAX_TIMER_FIRES_PER_DAY = 2_000;
-const DAY_MS = 24 * 60 * 60 * 1_000;
 
 interface RoomConfig {
   gameId: string;
@@ -76,22 +72,6 @@ interface RoomState {
   timerBudget: TimerBudget;
 }
 
-interface RoomTimer {
-  id: string;
-  dueAt: number;
-  payload?: JsonValue;
-}
-
-interface TimerBudget {
-  tokens: number;
-  updatedAt: number;
-  dayStart: number;
-  firedToday: number;
-}
-
-type TimerBudgetConsumption =
-  | { allowed: true; budget: TimerBudget }
-  | { allowed: false; budget: TimerBudget; nextAllowedAt: number };
 
 interface StoredAction {
   actorId: string;
@@ -100,14 +80,10 @@ interface StoredAction {
   result: RoomActionResult;
 }
 
-type GameActor = {
-  [key: string]: JsonValue;
-  id: string;
-  role: "player" | "spectator";
-  isOwner: boolean;
-};
 
 interface RoomMeta {
+  connectionMode?: RoomPresence["connectionMode"];
+  localHost?: RoomPresence["localHost"];
   roomId: string;
   manifestUrl: string;
   ownerPlayerId: string;
@@ -126,6 +102,7 @@ interface RoomMeta {
 }
 
 interface SocketAttachment {
+  instanceId?: string;
   playerId: string;
   actorId: string;
   lastSeenAt: number;
@@ -214,6 +191,10 @@ export class GameRoom extends DurableObject<Env> {
           return Response.json(await this.enqueue(() => this.join(request)));
         case "POST /start":
           return Response.json(await this.enqueue(() => this.start(request)));
+        case "GET /local-runtime":
+          return Response.json(await this.enqueue(() => this.localRuntime(request)), { headers: { "Cache-Control": "no-store" } });
+        case "POST /connection-mode":
+          return Response.json(await this.enqueue(() => this.setConnectionMode(request)));
         case "POST /leave":
           return Response.json(await this.enqueue(() => this.leave(request)));
         case "POST /seat":
@@ -316,6 +297,10 @@ export class GameRoom extends DurableObject<Env> {
         );
         return;
       }
+      if (isRecord(input) && input.type === "peer") {
+        await this.enqueue(() => this.forwardPeer(webSocket, attachment, input));
+        return;
+      }
       if (!isRecord(input) || input.type !== "action") {
         throw new RoomHttpError(
           400,
@@ -406,6 +391,8 @@ export class GameRoom extends DurableObject<Env> {
       delete member.avatarToken;
     }
     meta.manifestUrl = manifestUrl;
+    meta.connectionMode = "platform";
+    delete meta.localHost;
     meta.phase = "lobby";
     meta.config = undefined;
     this.bumpPresenceRevision(meta);
@@ -584,27 +571,34 @@ export class GameRoom extends DurableObject<Env> {
     ) {
       throw new RoomHttpError(409, "waiting for all players to get ready");
     }
-    const engine = await this.engine(config);
     const startedAt = Date.now();
     const match = {
       id: `match_${crypto.randomUUID().replaceAll("-", "")}`,
       startedAt,
       randomSeed: secureRandomSeed(),
     };
-    const setup = engine.setup({
-      protocolVersion: GAME_PROTOCOL_VERSION,
-      serverTime: startedAt,
-      match: {
-        id: match.id,
-        ownerId: members[ownerPlayerId]!.actorId,
-        startedAt: match.startedAt,
-        randomSeed: match.randomSeed,
-      },
-      players,
-    });
+    const meta = await this.meta();
+    if (meta.connectionMode && meta.connectionMode !== "platform") {
+      const input = await parseRequestJson(request);
+      if (!isRecord(input) || typeof input.hostInstanceId !== "string" || input.hostInstanceId.length > 128 || !input.hostInstanceId)
+        throw new RoomHttpError(400, "a local host instance is required");
+      meta.localHost = { id: members[playerId]!.actorId, instanceId: input.hostInstanceId,
+        matchId: match.id, startedAt, players: players.map(player => ({ ...player, ready: true })) };
+      meta.phase = "playing";
+      this.bumpPresenceRevision(meta);
+      await this.saveMeta(meta);
+      // Only match metadata is stored; Lua setup/actions/timers run in the browser.
+      await this.saveRoomState({ state: null, version: 0, match, recentActions: [], timers: [], timerBudget: initialTimerBudget(startedAt) });
+      this.disposeRuntime();
+      await this.touch();
+      const presence = await this.presence(); this.broadcast(presence);
+      return { presence };
+    }
+    const engine = await this.engine(config);
+    const setup = engine.setup(setupContext(match, members[ownerPlayerId]!.actorId, players));
     assertJsonSize(setup.state, "initial state", MAX_STATE_BYTES);
-    this.assertTimerSupport(config, setup.timerOps ?? []);
-    const timers = this.applyTimerOps([], setup.timerOps ?? [], startedAt);
+    assertTimerSupport(config.liveRoom, setup.timerOps ?? []);
+    const timers = applyTimerOps([], setup.timerOps ?? [], startedAt);
     const snapshot: RoomSnapshot = {
       type: "snapshot",
       state: setup.state,
@@ -625,7 +619,6 @@ export class GameRoom extends DurableObject<Env> {
       members,
       ownerPlayerId,
     );
-    const meta = await this.meta();
     meta.phase = "playing";
     this.bumpPresenceRevision(meta);
     await this.saveMeta(meta);
@@ -642,6 +635,67 @@ export class GameRoom extends DurableObject<Env> {
     this.broadcast(presence);
     this.sendPreparedBroadcast(messages);
     return { presence, snapshot: visibleSnapshot };
+  }
+
+  private async localRuntime(request: Request): Promise<RoomLocalRuntime> {
+    const meta = await this.meta();
+    const member = meta.members[this.playerId(request)];
+    if (!member || member.actorId !== meta.localHost?.id ||
+        new URL(request.url).searchParams.get("instanceId") !== meta.localHost.instanceId)
+      throw new RoomHttpError(403, "only the pinned browser host can load the local runtime");
+    if (meta.phase !== "playing" || meta.connectionMode === "platform")
+      throw new RoomHttpError(409, "local-host mode is not active");
+    const [config, room] = await Promise.all([this.config(), this.roomState()]);
+    return { matchId: room.match.id, startedAt: room.match.startedAt, script: config.script,
+      scriptHash: config.scriptHash, liveRoom: config.liveRoom,
+      context: setupContext(room.match, meta.localHost.id, meta.localHost.players) };
+  }
+
+  private async setConnectionMode(request: Request): Promise<RoomPresence> {
+    const meta = await this.meta();
+    if (this.playerId(request) !== meta.ownerPlayerId)
+      throw new RoomHttpError(403, "only the room host can change connection mode");
+    if (meta.phase !== "lobby") throw new RoomHttpError(409, "connection mode is locked during play");
+    const input = await parseRequestJson(request);
+    if (!isRecord(input) || !["platform", "local-host", "local-relay"].includes(String(input.mode)))
+      throw new RoomHttpError(400, "invalid connection mode");
+    if (input.mode !== "platform" && (await this.config()).runtime !== "lua")
+      throw new RoomHttpError(409, "local-host mode requires a Lua game");
+    meta.connectionMode = input.mode as RoomMeta["connectionMode"];
+    delete meta.localHost;
+    this.bumpPresenceRevision(meta);
+    await this.saveMeta(meta);
+    const presence = await this.presence();
+    this.broadcast(presence);
+    return presence;
+  }
+
+  private async forwardPeer(socket: WebSocket, attachment: SocketAttachment, input: Record<string, unknown>): Promise<void> {
+    const meta = await this.meta();
+    if (meta.phase !== "playing" || !meta.localHost || meta.connectionMode === "platform")
+      throw new RoomHttpError(409, "local-host mode is not active");
+    const sender = meta.members[attachment.playerId];
+    if (!sender || sender.actorId !== attachment.actorId) throw new RoomHttpError(403, "room membership expired");
+    if (sender.actorId === meta.localHost.id && attachment.instanceId !== meta.localHost.instanceId)
+      throw new RoomHttpError(403, "the browser host instance has changed");
+    if (input.matchId !== meta.localHost.matchId || typeof input.targetId !== "string" ||
+        (input.kind !== "signal" && input.kind !== "data")) throw new RoomHttpError(400, "invalid peer message");
+    const target = Object.entries(meta.members).find(([, member]) => member.actorId === input.targetId);
+    if (!target) throw new RoomHttpError(404, "peer is not in this room");
+    if (sender.actorId !== meta.localHost.id && input.targetId !== meta.localHost.id)
+      throw new RoomHttpError(403, "peer traffic must use the designated local host");
+    assertJson(input.body, "peer body");
+    assertJsonSize(input.body, "peer body", MAX_STATE_BYTES);
+    await this.noteSocketSeen(socket, attachment);
+    const message = JSON.stringify({ type: "peer", fromId: sender.actorId,
+      matchId: meta.localHost.matchId, kind: input.kind, body: input.body });
+    for (const peer of this.sockets()) {
+      const recipient = this.socketAttachment(peer);
+      if (recipient?.playerId === target[0] &&
+          (input.targetId !== meta.localHost.id || recipient.instanceId === meta.localHost.instanceId)) {
+        try { peer.send(message); } catch { /* A socket may close while forwarding. */ }
+      }
+    }
   }
 
   private async kick(request: Request): Promise<RoomPresence> {
@@ -762,12 +816,12 @@ export class GameRoom extends DurableObject<Env> {
       this.members(),
       this.ownerPlayerId(),
     ]);
-    const engine = await this.engine(config);
-    const serverTime = Date.now();
     const currentMeta = await this.meta();
-    const allowed = currentMeta.fault
+    const engine = currentMeta.localHost ? undefined : await this.engine(config);
+    const serverTime = Date.now();
+    const allowed = currentMeta.fault || currentMeta.localHost
       ? true
-      : engine.returnToRoom(room.state, {
+      : engine!.returnToRoom(room.state, {
           protocolVersion: GAME_PROTOCOL_VERSION,
           matchId: room.match.id,
           version: room.version,
@@ -787,6 +841,7 @@ export class GameRoom extends DurableObject<Env> {
     this.disposeRuntime();
     const meta = await this.meta();
     meta.phase = "lobby";
+    delete meta.localHost;
     meta.members = members;
     delete meta.fault;
     this.bumpPresenceRevision(meta);
@@ -820,7 +875,7 @@ export class GameRoom extends DurableObject<Env> {
       return { left: true, roomClosed: true };
     }
 
-    if (phase === "lobby") {
+    if (phase === "lobby" || (await this.meta()).localHost) {
       delete members[playerId];
       this.closePlayerSockets(playerId);
       const nextOwnerPlayerId = ownerLeft
@@ -868,12 +923,12 @@ export class GameRoom extends DurableObject<Env> {
       members,
       nextOwnerPlayerId,
     );
-    this.assertTimerSupport(config, result.timerOps ?? []);
+    assertTimerSupport(config.liveRoom, result.timerOps ?? []);
     await this.saveRoomState({
       ...room,
       state: result.state,
       version,
-      timers: this.applyTimerOps(room.timers, result.timerOps ?? [], leftAt),
+      timers: applyTimerOps(room.timers, result.timerOps ?? [], leftAt),
     });
     await this.saveMembershipAndOwnership(members, nextOwnerPlayerId);
     await this.touch();
@@ -1022,6 +1077,8 @@ export class GameRoom extends DurableObject<Env> {
     }
     if ((await this.phase()) !== "playing")
       throw new RoomHttpError(409, "the game has not started");
+    if ((await this.meta()).connectionMode && (await this.meta()).connectionMode !== "platform")
+      throw new RoomHttpError(409, "local-host actions must go to the browser host");
     if ((await this.memberActorId(input.playerId)) !== input.actorId) {
       throw new RoomHttpError(403, "player is not in this game");
     }
@@ -1058,15 +1115,10 @@ export class GameRoom extends DurableObject<Env> {
     const engine = await this.engine(config);
     const member = meta.members[input.playerId]!;
     const serverTime = Date.now();
-    const result = engine.applyAction(room.state, input.action, {
-      protocolVersion: GAME_PROTOCOL_VERSION,
-      matchId: room.match.id,
-      actionId: input.requestId,
-      actionAt: input.receivedAt,
-      serverTime,
-      version: room.version,
-      actor: this.gameActor(member, input.playerId === meta.ownerPlayerId),
-    });
+    const result = engine.applyAction(room.state, input.action, actionContext(
+      room.match.id, room.version, input.requestId, input.receivedAt, serverTime,
+      this.gameActor(member, input.playerId === meta.ownerPlayerId),
+    ));
     if (!result.accepted) {
       const actionResult: RoomActionResult = {
         type: "action-result",
@@ -1117,12 +1169,12 @@ export class GameRoom extends DurableObject<Env> {
       matchId: room.match.id,
       version,
     };
-    this.assertTimerSupport(config, result.timerOps ?? []);
+    assertTimerSupport(config.liveRoom, result.timerOps ?? []);
     await this.saveRoomState({
       ...room,
       state: result.state,
       version,
-      timers: this.applyTimerOps(
+      timers: applyTimerOps(
         room.timers,
         result.timerOps ?? [],
         serverTime,
@@ -1145,7 +1197,7 @@ export class GameRoom extends DurableObject<Env> {
    * an action bypass an authoritative deadline.
    */
   private async runDueTimers(cutoffAt: number): Promise<void> {
-    if ((await this.phase()) !== "playing") return;
+    if ((await this.phase()) !== "playing" || (await this.meta()).localHost) return;
     const config = await this.config();
     if (config.liveRoom) return;
 
@@ -1215,7 +1267,7 @@ export class GameRoom extends DurableObject<Env> {
       );
       let timers: RoomTimer[];
       try {
-        timers = this.applyTimerOps(
+        timers = applyTimerOps(
           room.timers.filter((candidate) => candidate.id !== timer.id),
           result.timerOps ?? [],
           firedAt,
@@ -1234,65 +1286,6 @@ export class GameRoom extends DurableObject<Env> {
       });
       await this.touch();
       this.sendPreparedBroadcast(messages);
-    }
-  }
-
-  private applyTimerOps(
-    existing: RoomTimer[],
-    operations: GameTimerOperation[],
-    scheduledAt: number,
-  ): RoomTimer[] {
-    const timers = new Map(existing.map((timer) => [timer.id, timer]));
-    for (const operation of operations) {
-      if (operation.op === "cancel") {
-        timers.delete(operation.id);
-        continue;
-      }
-      if (operation.payload !== undefined) {
-        assertJsonSize(
-          operation.payload,
-          `timer ${operation.id} payload`,
-          MAX_TIMER_PAYLOAD_BYTES,
-        );
-      }
-      timers.set(operation.id, {
-        id: operation.id,
-        dueAt: scheduledAt + operation.afterMs,
-        ...(operation.payload === undefined
-          ? {}
-          : { payload: operation.payload }),
-      });
-    }
-    if (timers.size > MAX_PENDING_TIMERS) {
-      throw new GameRuntimeError(
-        `a room may have at most ${MAX_PENDING_TIMERS} pending timers`,
-      );
-    }
-    const result = [...timers.values()].sort(compareTimers);
-    const payloadBytes = result.reduce(
-      (total, timer) =>
-        total +
-        (timer.payload === undefined
-          ? 0
-          : new TextEncoder().encode(JSON.stringify(timer.payload)).byteLength),
-      0,
-    );
-    if (payloadBytes > MAX_TIMER_PAYLOAD_TOTAL_BYTES) {
-      throw new GameRuntimeError(
-        `timer payloads exceed the ${MAX_TIMER_PAYLOAD_TOTAL_BYTES}-byte room limit`,
-      );
-    }
-    return result;
-  }
-
-  private assertTimerSupport(
-    config: RoomConfig,
-    operations: GameTimerOperation[],
-  ): void {
-    if (config.liveRoom && operations.length > 0) {
-      throw new GameRuntimeError(
-        "timerOps require persisted room storage; live rooms cannot schedule timers",
-      );
     }
   }
 
@@ -1355,6 +1348,7 @@ export class GameRoom extends DurableObject<Env> {
     const actorId = await this.memberActorId(this.playerId(request));
     if ((await this.phase()) !== "playing")
       throw new RoomHttpError(409, "the game has not started");
+    if ((await this.meta()).localHost) throw new RoomHttpError(409, "request the snapshot from the browser host");
     return this.snapshot(actorId);
   }
 
@@ -1381,6 +1375,7 @@ export class GameRoom extends DurableObject<Env> {
       const now = Date.now();
       const attachment = {
         playerId,
+        instanceId: new URL(request.url).searchParams.get("instanceId")?.slice(0, 128),
         actorId: await this.memberActorId(playerId),
         lastSeenAt: now,
         isOwner: playerId === (await this.ownerPlayerId()),
@@ -1436,7 +1431,7 @@ export class GameRoom extends DurableObject<Env> {
         try {
           const presence = await this.presence();
           server.send(JSON.stringify(presence));
-          if (presence.phase === "playing") {
+          if (presence.phase === "playing" && !presence.localHost) {
             server.send(JSON.stringify(await this.snapshot(actorId)));
           }
         } catch (error) {
@@ -1795,18 +1790,7 @@ export class GameRoom extends DurableObject<Env> {
     viewer: GameActor,
     engine: GameRuntime,
   ): RoomSnapshot {
-    const visible = engine.view(snapshot.state, snapshot.events ?? [], {
-      protocolVersion: GAME_PROTOCOL_VERSION,
-      matchId: snapshot.matchId,
-      version: snapshot.version,
-      serverTime: snapshot.serverTime,
-      viewer,
-    });
-    return {
-      ...snapshot,
-      state: visible.state,
-      events: visible.events,
-    };
+    return projectSnapshot(engine, snapshot, viewer);
   }
 
   private prepareStateBroadcast(
@@ -1839,13 +1823,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private gameActor(member: RoomMember, isOwner: boolean): GameActor {
-    return {
-      id: member.actorId,
-      ...(member.name ? { name: member.name } : {}),
-      role: member.seat === undefined ? "spectator" : "player",
-      ...(member.seat === undefined ? {} : { seat: member.seat }),
-      isOwner,
-    };
+    return roomActor({ id: member.actorId, name: member.name, seat: member.seat }, isOwner);
   }
 
   private viewerForActor(
@@ -2030,7 +2008,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private async presence(): Promise<RoomPresence> {
-    const { config, phase, members, ownerPlayerId, presenceRevision, roomId } =
+    const { config, phase, members, ownerPlayerId, presenceRevision, roomId, connectionMode, localHost } =
       await this.meta();
     if (!config) {
       throw new RoomHttpError(
@@ -2069,6 +2047,8 @@ export class GameRoom extends DurableObject<Env> {
       ownerId: members[ownerPlayerId]?.actorId ?? "",
       minPlayers: config.minPlayers,
       maxPlayers: config.maxPlayers,
+      connectionMode: connectionMode ?? "platform",
+      ...(localHost && phase === "playing" ? { localHost } : {}),
     };
   }
 }
@@ -2414,59 +2394,6 @@ function parseJson(value: string): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function compareTimers(left: RoomTimer, right: RoomTimer): number {
-  return left.dueAt - right.dueAt || left.id.localeCompare(right.id);
-}
-
-function initialTimerBudget(now: number): TimerBudget {
-  return {
-    tokens: TIMER_BUDGET_CAPACITY,
-    updatedAt: now,
-    dayStart: utcDayStart(now),
-    firedToday: 0,
-  };
-}
-
-function consumeTimerBudget(
-  stored: TimerBudget,
-  now: number,
-): TimerBudgetConsumption {
-  const dayStart = utcDayStart(now);
-  const firedToday = stored.dayStart === dayStart ? stored.firedToday : 0;
-  const tokens = Math.min(
-    TIMER_BUDGET_CAPACITY,
-    stored.tokens +
-      Math.max(0, now - stored.updatedAt) / TIMER_BUDGET_REFILL_MS,
-  );
-  if (firedToday >= MAX_TIMER_FIRES_PER_DAY) {
-    return {
-      allowed: false,
-      budget: { tokens, updatedAt: now, dayStart, firedToday },
-      nextAllowedAt: dayStart + DAY_MS,
-    };
-  }
-  if (tokens < 1) {
-    return {
-      allowed: false,
-      budget: { tokens, updatedAt: now, dayStart, firedToday },
-      nextAllowedAt: now + Math.ceil((1 - tokens) * TIMER_BUDGET_REFILL_MS),
-    };
-  }
-  return {
-    allowed: true,
-    budget: {
-      tokens: tokens - 1,
-      updatedAt: now,
-      dayStart,
-      firedToday: firedToday + 1,
-    },
-  };
-}
-
-function utcDayStart(now: number): number {
-  return Math.floor(now / DAY_MS) * DAY_MS;
 }
 
 function errorMessage(error: unknown): string {

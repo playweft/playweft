@@ -1,3 +1,6 @@
+export * from "./timers";
+export * from "./match";
+
 import type { ActionError, JsonValue } from "@playweft/game-protocol";
 
 export class GameRuntimeError extends Error {

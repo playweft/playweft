@@ -47,6 +47,7 @@ export default function RoomLobby({
     setChangeGameOpen,
     setDissolveDialogOpen,
     chooseSeat,
+    setConnectionDialogOpen,
     transferHost,
     kick,
   } = controls;
@@ -219,6 +220,18 @@ export default function RoomLobby({
               role="menuitem"
               onClick={() => {
                 setLobbyMenuOpen(false);
+                setConnectionDialogOpen(true);
+              }}
+            >
+              {t("roomSettings")}
+            </button>
+          )}
+          {isOwner && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setLobbyMenuOpen(false);
                 setChangeGameOpen(true);
               }}
             >
@@ -296,7 +309,11 @@ export default function RoomLobby({
                         {spectator.name ||
                           t("spectatorFallback", { number: index + 1 })}
                         {spectator.id === lobby.ownerId && (
-                          <span className="host-crown" title={t("host")} aria-label={t("host")}>
+                          <span
+                            className="host-crown"
+                            title={t("host")}
+                            aria-label={t("host")}
+                          >
                             <Crown aria-hidden="true" />
                           </span>
                         )}
@@ -304,10 +321,21 @@ export default function RoomLobby({
                       {spectator.id === selfId && <small>{t("you")}</small>}
                       {isOwner && spectator.id !== selfId && (
                         <div className="spectator-menu-management">
-                          <button type="button" onClick={() => closeMenu(() => void transferHost(spectator.id))}>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              closeMenu(() => void transferHost(spectator.id))
+                            }
+                          >
                             {t("makeHost")}
                           </button>
-                          <button type="button" className="menu-danger" onClick={() => closeMenu(() => void kick(spectator.id))}>
+                          <button
+                            type="button"
+                            className="menu-danger"
+                            onClick={() =>
+                              closeMenu(() => void kick(spectator.id))
+                            }
+                          >
                             {t("remove")}
                           </button>
                         </div>

@@ -133,6 +133,8 @@ export default defineConfig({
       manifest: false,
       injectManifest: {
         globPatterns: ["**/*.{html,js,css,svg,png,webmanifest}"],
+        // Lua is requested only by the simulation host, not downloaded on SW install.
+        globIgnores: ["**/lua-runtime-*.js"],
       },
     }),
   ],

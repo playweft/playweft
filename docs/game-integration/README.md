@@ -221,7 +221,7 @@ The platform sends:
 | Method | Params |
 | --- | --- |
 | `game.state` | `{ phase, state, events, matchId, version, serverTime }`; state and events have already been projected for this player. |
-| `platform.latency` | `{ rttMs }`; the latest platform-to-room round-trip time in whole milliseconds. It is emitted when the platform receives a probe acknowledgement, and may be absent until the first measurement. |
+| `platform.latency` | `{ rttMs?, transport, status }`; RTT to the current game authority in whole milliseconds. `transport` is `platform`, `local`, `webrtc`, or `relay`. `status` is `ready`, `measuring`, or `unavailable`; only `ready` includes `rttMs`. A local authority reports 0 (no network round trip). |
 | `platform.error` | `{ error: { code, message, retryable } }` for a failure not tied to an outstanding request. |
 
 ```js
@@ -250,7 +250,7 @@ function onRpcMessage(event) {
   }
 
   if (message.method === "platform.latency") {
-    updateConnectionIndicator(message.params.rttMs);
+    updateConnectionIndicator(message.params.rttMs); // undefined means unknown
   }
 }
 
@@ -668,3 +668,13 @@ WebSocket snapshot and WebSocket update. Inputs are copies, so mutations in
   sandbox; await `playweft.window.alert()` or `playweft.window.confirm()`.
 
 See [`apps/rps-demo`](../../apps/rps-demo) for a complete package.
+
+
+Latency follows the game authority: platform mode measures client ↔ Worker;
+WebRTC mode measures client ↔ browser host; relay fallback measures client ↔
+platform ↔ browser host. Probes and replies use the same path. Switching paths,
+losing a connection, or timing out invalidates the old reading and emits a
+notification without `rttMs`. The iframe receives the latest reading when its
+bridge connects. Legacy games can continue consuming numeric `rttMs` samples;
+games that display connection state should clear their last sample when it is
+absent. Do not convert an absent reading to zero.

@@ -18,8 +18,11 @@ import {
   isRoomMemberNotFound,
   type RoomEntryFailure,
 } from "./room-errors";
+import { LocalHostRoom, type PeerTransport } from "./peer/LocalHostRoom";
 
 export interface RoomSessionState {
+  peerTransport?: PeerTransport;
+  peerLatency?: number;
   lifecycle: "entering" | "joined" | "failed" | "ended";
   connection: RoomConnectionState;
   loadedGame?: LoadedGame;
@@ -43,6 +46,8 @@ export type RoomServices = Pick<
   | "createGuestSession"
   | "getRoomLaunch"
   | "getRoomMembership"
+  | "setRoomConnectionMode"
+  | "getRoomLocalRuntime"
   | "initializeRoom"
   | "joinRoom"
   | "getPlatformSession"
@@ -96,6 +101,9 @@ export class RoomSession {
   private syncedNickname?: string;
   private nicknameRevision = 0;
   private checkingRoomGeneration?: number;
+  private hostInstanceId = crypto.randomUUID();
+  private localRoom?: LocalHostRoom;
+  private localMatchId?: string;
   private pendingActions = new Map<
     string,
     { resolve(value: JsonValue): void; reject(reason: unknown): void }
@@ -107,13 +115,15 @@ export class RoomSession {
     private readonly options: SessionOptions,
   ) {
     this.connection = new RoomConnection({
-      createSocket: () => api.connectRoom(roomId),
+      createSocket: () => api.connectRoom(roomId, this.hostInstanceId),
       onMessage: (message) => this.receive(message),
       onState: (connection) => {
         this.patch({
           connection,
+          ...(connection !== "connected" ? { latency: undefined } : {}),
           ...(connection === "connected" ? { error: undefined } : {}),
         });
+        this.localRoom?.setRelayAvailable(connection === "connected");
         if (connection === "reconnecting" || connection === "failed")
           void this.verifyRoomMembership();
       },
@@ -226,12 +236,26 @@ export class RoomSession {
 
   async start(): Promise<boolean> {
     return this.perform(async () => {
-      const result = await this.api.startRoom(this.roomId);
+      const result = await this.api.startRoom(
+        this.roomId,
+        this.state.presence?.connectionMode &&
+          this.state.presence.connectionMode !== "platform"
+          ? this.hostInstanceId
+          : undefined,
+      );
       return () => {
         this.applyPresence(result.presence);
-        this.publish(result.snapshot);
+        if (!this.state.presence?.localHost && result.snapshot)
+          this.publish(result.snapshot);
       };
     });
+  }
+  setConnectionMode(
+    mode: NonNullable<RoomPresence["connectionMode"]>,
+  ): Promise<boolean> {
+    return this.updatePresence(() =>
+      this.api.setRoomConnectionMode(this.roomId, mode),
+    );
   }
   chooseSeat(seat: number | null): Promise<boolean> {
     return this.updatePresence(() => this.api.setRoomSeat(this.roomId, seat));
@@ -257,7 +281,15 @@ export class RoomSession {
     );
   }
   returnToRoom(): Promise<boolean> {
-    return this.updatePresence(() => this.api.returnRoomToLobby(this.roomId));
+    return this.updatePresence(async () => {
+      const matchId = this.state.presence?.localHost?.matchId;
+      if (this.localRoom && !(await this.localRoom.canReturnToRoom()))
+        throw new Error("The game does not allow returning to the room yet");
+      this.assertActive();
+      if (matchId && this.state.presence?.localHost?.matchId !== matchId)
+        throw rpcPlatformFault("GAME_CHANGED", "The match was replaced");
+      return this.api.returnRoomToLobby(this.roomId);
+    });
   }
   changeGame(url: string): Promise<boolean> {
     return this.perform(async () => {
@@ -290,13 +322,12 @@ export class RoomSession {
   async shareAvatar(shared: boolean): Promise<RoomPresence> {
     const generation = this.generation;
     this.assertActive();
-    const presence = await this.api.setRoomProfileAvatarSharing(
-      this.roomId,
-      shared,
-    ).catch((reason) => {
-      this.endIfRoomUnavailable(reason, generation);
-      throw reason;
-    });
+    const presence = await this.api
+      .setRoomProfileAvatarSharing(this.roomId, shared)
+      .catch((reason) => {
+        this.endIfRoomUnavailable(reason, generation);
+        throw reason;
+      });
     if (!this.isCurrent(generation))
       throw rpcPlatformFault("ROOM_CLOSED", "The room session was replaced");
     this.applyPresence(presence);
@@ -315,6 +346,22 @@ export class RoomSession {
       );
     }
     this.connection.noteActivity();
+    if (this.state.presence.localHost) {
+      if (!this.localRoom)
+        throw rpcPlatformFault(
+          "LOCAL_HOST_UNAVAILABLE",
+          "Local host is not ready",
+        );
+      try {
+        return await this.localRoom.action(requestId, action);
+      } catch (reason) {
+        throw rpcPlatformFault(
+          "LOCAL_HOST_UNAVAILABLE",
+          errorMessage(reason, "Local host is unavailable"),
+          true,
+        );
+      }
+    }
     if (this.state.loadedGame?.room?.liveRoom) {
       if (this.state.connection !== "connected") {
         throw rpcPlatformFault(
@@ -383,6 +430,7 @@ export class RoomSession {
     this.stopped = true;
     this.generation += 1;
     this.connection.dispose();
+    this.disposeLocalRoom();
     this.cancelActions("ROOM_CLOSED", "The room session was closed");
     this.state = {
       ...this.state,
@@ -410,7 +458,8 @@ export class RoomSession {
   ): boolean {
     if (
       this.isCurrent(generation) &&
-      (isRoomNotFound(reason) || (missingMember && isRoomMemberNotFound(reason)))
+      (isRoomNotFound(reason) ||
+        (missingMember && isRoomMemberNotFound(reason)))
     ) {
       this.end();
       return true;
@@ -424,7 +473,8 @@ export class RoomSession {
       this.stopped ||
       this.state.lifecycle !== "joined" ||
       this.checkingRoomGeneration === generation
-    ) return;
+    )
+      return;
     this.checkingRoomGeneration = generation;
     try {
       await this.api.getRoomMembership(this.roomId);
@@ -459,6 +509,7 @@ export class RoomSession {
   private async loadGame(manifestUrl: string): Promise<void> {
     const generation = ++this.generation;
     this.cancelActions("GAME_CHANGED", "The room game was changed");
+    this.disposeLocalRoom();
     this.connection.setHeartbeatRequired(false);
     this.patch({
       lifecycle: "entering",
@@ -484,11 +535,16 @@ export class RoomSession {
 
   private receive(message: RoomMessage): void {
     if (this.stopped) return;
+    if (message.type === "peer") {
+      this.localRoom?.receive(message);
+      return;
+    }
     if (message.type === "game_changed") {
       void this.loadGame(message.manifestUrl);
     } else if (message.type === "room.presence") this.applyPresence(message);
-    else if (message.type === "snapshot" || message.type === "state") this.publish(message);
-    else if (message.type === "action-result") {
+    else if (message.type === "snapshot" || message.type === "state") {
+      if (!this.state.presence?.localHost) this.publish(message);
+    } else if (message.type === "action-result") {
       const pending = this.pendingActions.get(message.requestId);
       this.pendingActions.delete(message.requestId);
       pending?.resolve(actionResultForRpc(message));
@@ -516,10 +572,14 @@ export class RoomSession {
             }
           : {}),
       });
+      this.syncLocalRoom(presence);
     }
     this.connection.setHeartbeatRequired(
       Boolean(
-        (this.state.selfId && this.state.presence?.ownerId === this.state.selfId) ||
+        (this.state.selfId &&
+          this.state.presence?.ownerId === this.state.selfId) ||
+        (this.state.selfId &&
+          this.state.presence?.localHost?.id === this.state.selfId) ||
         this.state.presence?.players.some(
           (player) => player.id === this.state.selfId,
         ),
@@ -537,6 +597,70 @@ export class RoomSession {
     )
       return;
     this.patch({ snapshot });
+  }
+
+  private disposeLocalRoom(): void {
+    this.localRoom?.dispose();
+    this.localRoom = undefined;
+    this.localMatchId = undefined;
+    this.patch({ peerTransport: undefined, peerLatency: undefined });
+  }
+
+  private syncLocalRoom(presence: RoomPresence): void {
+    if (
+      !presence.localHost ||
+      presence.phase !== "playing" ||
+      !this.state.selfId
+    ) {
+      if (this.localRoom) this.disposeLocalRoom();
+      return;
+    }
+    if (this.localMatchId === presence.localHost.matchId) {
+      this.localRoom?.setPresence(presence);
+      return;
+    }
+    this.disposeLocalRoom();
+    const generation = this.generation;
+    const matchId = presence.localHost.matchId;
+    this.localMatchId = matchId;
+    this.localRoom = new LocalHostRoom({
+      selfId: this.state.selfId,
+      instanceId: this.hostInstanceId,
+      presence,
+      relayAvailable: this.state.connection === "connected",
+      sendRelay: (targetId, kind, body) =>
+        this.connection.send({ type: "peer", targetId, matchId, kind, body }),
+      loadHost: async () => {
+        const [boot, { createLuaRuntime }] = await Promise.all([
+          this.api.getRoomLocalRuntime(this.roomId, this.hostInstanceId),
+          import("./peer/lua-runtime"),
+        ]);
+        if (!this.isCurrent(generation) || this.localMatchId !== matchId)
+          throw rpcPlatformFault("GAME_CHANGED", "The match was replaced");
+        return { boot, runtime: await createLuaRuntime(boot.script) };
+      },
+      onError: (error) => {
+        if (this.isCurrent(generation) && this.localMatchId === matchId)
+          this.setError(error.message);
+      },
+      onSnapshot: (snapshot) => {
+        if (this.isCurrent(generation) && this.localMatchId === matchId)
+          this.publish(snapshot);
+      },
+      onTransport: (peerTransport) => {
+        if (this.isCurrent(generation) && this.localMatchId === matchId)
+          this.patch({
+            peerTransport,
+            ...(this.state.peerTransport !== peerTransport
+              ? { peerLatency: undefined }
+              : {}),
+          });
+      },
+      onLatency: (peerLatency) => {
+        if (this.isCurrent(generation) && this.localMatchId === matchId)
+          this.patch({ peerLatency });
+      },
+    });
   }
 
   private async syncAvatar(generation: number): Promise<void> {

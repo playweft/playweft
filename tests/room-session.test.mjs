@@ -114,6 +114,8 @@ function browser() {
           let target;
           if (name === "@playweft/game-protocol")
             target = resolve(root, "packages/game-protocol/src/index.ts");
+          else if (name === "@playweft/runtime-core")
+            target = resolve(root, "packages/runtime-core/src/index.ts");
           else if (name.startsWith("@/"))
             target = resolve(root, "apps/web/src", `${name.slice(2)}.ts`);
           else if (name.startsWith("."))
@@ -1096,11 +1098,11 @@ function spectatorHostBackend() {
   b.globals.crypto.getRandomValues = data => { data.fill(1); return data; };
   const {GameRoom} = b.moduleAt('apps/worker/src/room.ts', {
     'cloudflare:workers': {DurableObject: class {constructor(ctx) {this.ctx = ctx;}}},
-    '@playweft/runtime-lua': {}, '@playweft/runtime-core': {GameRuntimeError: class extends Error {}}, './runtime-registry': {},
+    '@playweft/runtime-lua': {}, './runtime-registry': {},
   });
   const stored = new Map([['roomMeta', {
     roomId: 'room', manifestUrl: 'https://game.example/playweft.json', phase: 'lobby', ownerPlayerId: 'host', presenceRevision: 0,
-    config: {maxPlayers: 2, minPlayers: 2, liveRoom: false, scriptHash: 'hash'},
+    config: {maxPlayers: 2, minPlayers: 2, runtime: 'lua', script: 'same-source', liveRoom: false, scriptHash: 'hash'},
     members: {host: {actorId: 'host', joinedAt: 0, seat: 1, ready: false},
       guest: {actorId: 'guest', joinedAt: 1, seat: 2, ready: true}, observer: {actorId: 'observer', joinedAt: 2, ready: false}},
   }]]);
@@ -1193,4 +1195,65 @@ test('lobby exposes spectating to seated hosts and management actions for specta
   assert.ok(spectate); spectate.props.onClick(); assert.equal(target, null);
   const transfer = find(content, node => node.type === 'button' && node.props.children === 'makeHost');
   transfer.props.onClick(); assert.equal(target, 'observer');
+});
+
+test('local mode is owner-only, works for any Lua game, and never executes cloud setup/actions', async () => {
+  const f = spectatorHostBackend();
+  assert.equal((await f.request('connection-mode','guest',{mode:'local-host'})).status,403);
+  assert.equal((await f.request('connection-mode','host',{mode:'invalid'})).status,400);
+  assert.equal((await f.request('connection-mode','host',{mode:'local-host'})).status,200);
+  f.room.engine=async()=>{throw new Error('Cloud execution must not run');};
+  assert.equal((await f.request('start','host',{})).status,400);
+  assert.equal(f.stored.get('roomMeta').phase,'lobby');
+  const response=await f.request('start','host',{hostInstanceId:'pinned'});
+  assert.equal(response.status,200);const result=await response.json();
+  assert.equal(result.snapshot,undefined);assert.equal(result.presence.localHost.instanceId,'pinned');
+  assert.equal(f.stored.get('gameState').state,null);assert.deepEqual(f.stored.get('gameState').timers,[]);
+  assert.equal((await f.request('connection-mode','host',{mode:'platform'})).status,409);
+  assert.equal((await f.request('actions','guest',{requestId:'act',action:{}})).status,409);
+  const boot=player=>f.room.fetch(new Request('https://room.example/local-runtime?instanceId=pinned',{headers:{'X-Playweft-Player-Id':player}}));
+  assert.equal((await boot('guest')).status,403);
+  const hostBoot=await boot('host');assert.equal(hostBoot.status,200);
+  const value=await hostBoot.json();assert.equal(value.script,'same-source');assert.equal(value.context.match.id,result.presence.localHost.matchId);
+  assert.equal(value.context.match.ownerId,'host');assert.ok(value.context.match.randomSeed);
+  const wrongInstance=await f.room.fetch(new Request('https://room.example/local-runtime?instanceId=other',{headers:{'X-Playweft-Player-Id':'host'}}));
+  assert.equal(wrongInstance.status,403);
+  assert.equal((await f.request('leave','guest')).status,200);
+  assert.equal((await f.request('return-to-room')).status,200);assert.equal(f.stored.get('roomMeta').localHost,undefined);
+});
+
+test('peer relay authenticates sender, pins the host browser and rejects cross-peer traffic and old matches',async()=>{
+  const f=spectatorHostBackend();
+  await f.request('connection-mode','host',{mode:'local-host'});
+  const {presence}=await (await f.request('start','host',{hostInstanceId:'pinned'})).json();
+  const out=[],attachments=new Map();
+  const socket=(playerId,instanceId)=>{const socket={send:message=>out.push({playerId,instanceId,...JSON.parse(message)})};attachments.set(socket,{playerId,actorId:playerId,instanceId});return socket;};
+  const host=socket('host','pinned'),otherTab=socket('host','other'),guest=socket('guest','guest'),observer=socket('observer','observer');
+  f.room.sockets=()=>[host,otherTab,guest,observer];f.room.socketAttachment=socket=>attachments.get(socket);f.room.noteSocketSeen=async()=>{};
+  const input={type:'peer',matchId:presence.localHost.matchId,targetId:'host',kind:'data',fromId:'forged',body:{type:'hello'}};
+  await f.room.forwardPeer(guest,attachments.get(guest),input);
+  assert.equal(out.length,1);assert.equal(out[0].fromId,'guest');assert.equal(out[0].instanceId,'pinned');
+  await assert.rejects(f.room.forwardPeer(guest,attachments.get(guest),{...input,targetId:'observer'}),/designated/);
+  await assert.rejects(f.room.forwardPeer(guest,attachments.get(guest),{...input,matchId:'old'}),/invalid peer/);
+  await assert.rejects(f.room.forwardPeer(otherTab,attachments.get(otherTab),{...input,targetId:'guest'}),/instance has changed/);
+  await f.room.forwardPeer(host,attachments.get(host),{...input,targetId:'guest'});assert.equal(out.at(-1).fromId,'host');
+});
+
+
+test('game bridge reports RTT to the authority, resets on route changes, and replays the current reading',async()=>{
+  const f=fixture({}, {phase:'playing'});await f.join();
+  const hook=bridgeHarness(f);hook.render();const bridge=hook.attachments[0];bridge.connect();
+  const readings=()=>bridge.messages.filter(message=>message.method==='platform.latency').map(message=>JSON.parse(JSON.stringify(message.params)));
+  f.session.patch({latency:88});assert.deepEqual(readings().at(-1),{rttMs:88,transport:'platform',status:'ready'});
+  const localHost={id:'authority',instanceId:'instance',matchId:'match',startedAt:0,players:[]};
+  f.session.patch({presence:{...f.session.getState().presence,localHost},peerTransport:'webrtc',peerLatency:12});
+  assert.deepEqual(readings().at(-1),{rttMs:12,transport:'webrtc',status:'ready'});
+  const before=readings().length;f.session.patch({latency:120});assert.equal(readings().length,before,'control socket latency does not replace game RTT');
+  f.session.patch({peerTransport:'relay',peerLatency:undefined});assert.deepEqual(readings().at(-1),{transport:'relay',status:'measuring'});
+  f.session.patch({peerLatency:180});assert.deepEqual(readings().at(-1),{rttMs:180,transport:'relay',status:'ready'});
+  bridge.connect();assert.deepEqual(readings().at(-1),{rttMs:180,transport:'relay',status:'ready'});
+  f.session.patch({connection:'reconnecting'});assert.deepEqual(readings().at(-1),{transport:'relay',status:'unavailable'});
+  f.session.patch({selfId:'authority',peerTransport:'host',peerLatency:250});assert.deepEqual(readings().at(-1),{rttMs:0,transport:'local',status:'ready'});
+  f.session.patch({peerTransport:'paused'});assert.deepEqual(readings().at(-1),{transport:'local',status:'unavailable'});
+  hook.dispose();f.session.dispose();
 });

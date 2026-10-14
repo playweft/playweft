@@ -25,9 +25,45 @@ export default function RoomDialogs({
     changeGameOpen,
     setChangeGameOpen,
     changeGame,
+    connectionDialogOpen,
+    setConnectionDialogOpen,
+    connectionMode,
+    setConnectionMode,
+    supportsLocalHost,
+    isOwner,
+    phase,
   } = controls;
   return (
     <>
+      {connectionDialogOpen && (
+        <Dialog
+          title={t("roomSettings")}
+          onDismiss={() => setConnectionDialogOpen(false)}
+        >
+          <label className="settings-list-item" htmlFor="room-connection-mode">
+            <span>{t("connectionMethod")}</span>
+            <select
+              id="room-connection-mode"
+              name="connectionMode"
+              value={
+                connectionMode === "local-relay" ? "local-host" : connectionMode
+              }
+              disabled={!isOwner || phase !== "lobby"}
+              onChange={(event) =>
+                void setConnectionMode(
+                  event.target.value as typeof connectionMode,
+                )
+              }
+            >
+              <option value="platform">{t("connectionPlatform")}</option>
+              <option value="local-host" disabled={!supportsLocalHost}>
+                {t("connectionLocalHost")}
+              </option>
+            </select>
+          </label>
+          <p>{t("connectionExperimentHelp")}</p>
+        </Dialog>
+      )}
       {inviteDialogOpen && (
         <InviteDialog
           roomId={roomId}

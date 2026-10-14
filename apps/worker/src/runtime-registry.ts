@@ -1,3 +1,4 @@
+import "@playweft/runtime-lua/wasm";
 import { LuaGameRuntime } from "@playweft/runtime-lua";
 import type { GameRuntime, GameRuntimeAdapter } from "@playweft/runtime-core";
 

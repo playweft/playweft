@@ -13,14 +13,15 @@
     "test:ai-cancel": "node --test tests/language-model-cancel.test.mjs",
     "test:room-session": "node --test tests/room-session.test.mjs",
     "test:game-navigation": "node --test tests/game-navigation.test.mjs",
-    "check": "npm run test:live-activity && npm run test:ai-cancel && npm run test:room-session && npm run test:game-navigation && npm run check --workspace @playweft/worker && npm run build:web",
+    "check": "npm run test:live-activity && npm run test:ai-cancel && npm run test:room-session && npm run test:local-host && npm run test:game-navigation && npm run check --workspace @playweft/worker && npm run build:web",
     "dev:worker": "npm run dev --workspace @playweft/worker --",
     "dev:web": "npm run dev --workspace @playweft/web",
     "dev:rps": "npm run dev --workspace @playweft/rps-demo",
     "build:web": "npm run build --workspace @playweft/web && npm run build --workspace @playweft/rps-demo",
     "build:rps": "npm run build --workspace @playweft/rps-demo",
     "deploy:platform": "npm run build:web && npm run deploy --workspace @playweft/worker",
-    "deploy:worker": "npm run deploy:platform"
+    "deploy:worker": "npm run deploy:platform",
+    "test:local-host": "node --test tests/local-host.test.mjs"
   },
   "devDependencies": {
     "patch-package": "8.0.1"

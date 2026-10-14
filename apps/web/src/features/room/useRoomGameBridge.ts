@@ -1,3 +1,4 @@
+import { gameLatency } from "./game-latency";
 import { useEffect, useRef, type RefObject } from "react";
 import {
   JsonRpcErrorCode,
@@ -141,9 +142,10 @@ export function useRoomGameBridge({
       },
       onPortChange(next) {
         port = next;
-        const rttMs = session.getState().latency;
-        if (port && rttMs !== undefined)
-          postRpcNotification(port, "platform.latency", { rttMs });
+        if (port)
+          postRpcNotification(port, "platform.latency", {
+            ...gameLatency(session.getState()),
+          });
       },
       handlers: {
         "game.initialize": {
@@ -304,8 +306,9 @@ export function useRoomGameBridge({
       }
       if (next.snapshot && next.snapshot !== previous.snapshot)
         sendSnapshot(next.snapshot);
-      if (next.latency !== undefined && next.latency !== previous.latency)
-        postRpcNotification(port, "platform.latency", { rttMs: next.latency });
+      const latency = gameLatency(next);
+      if (JSON.stringify(latency) !== JSON.stringify(gameLatency(previous)))
+        postRpcNotification(port, "platform.latency", { ...latency });
       publishProfileChanges(port, previous.presence, next.presence);
       previous = next;
     });

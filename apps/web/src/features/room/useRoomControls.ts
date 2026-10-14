@@ -48,6 +48,7 @@ export function useRoomControls(
   const hintTimer = useRef<number | undefined>(undefined);
   const copyTimer = useRef<number | undefined>(undefined);
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+  const [connectionDialogOpen, setConnectionDialogOpen] = useState(false);
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [gameInfoOpen, setGameInfoOpen] = useState(false);
   const [gameHelpOpen, setGameHelpOpen] = useState(false);
@@ -138,6 +139,13 @@ export function useRoomControls(
     selfId,
     phase,
     isOwner,
+    connectionMode: lobby?.connectionMode ?? "platform",
+    peerTransport: state.peerTransport,
+    peerLatency: state.peerLatency,
+    connectionDialogOpen,
+    setConnectionDialogOpen,
+    supportsLocalHost: state.loadedGame?.room?.runtime === "lua",
+    setConnectionMode: (mode: NonNullable<import("@playweft/game-protocol").RoomPresence["connectionMode"]>) => session?.setConnectionMode(mode),
     selfPlayer,
     isSpectating,
     firstOpenSeat,

@@ -13,7 +13,7 @@ import {
   type GameTimerOperation,
   type GameTransitionResult,
 } from "@playweft/runtime-core";
-import "./wasm";
+
 
 const LUA_REGISTRY_INDEX = -1_001_000;
 const LUA_MULTRET = -1;

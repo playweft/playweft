@@ -591,6 +591,13 @@ export const JsonRpcErrorCode = {
   PlatformError: -32000,
 } as const;
 
+/** RTT to the current game authority. Unknown readings omit rttMs, never use zero. */
+export interface PlatformLatency {
+  rttMs?: number;
+  transport: "platform" | "local" | "webrtc" | "relay";
+  status: "ready" | "measuring" | "unavailable";
+}
+
 export interface RoomSnapshot {
   type: "snapshot" | "state";
   state: JsonValue;
@@ -617,12 +624,31 @@ export interface RoomPresence {
   ownerId: string;
   minPlayers: number;
   maxPlayers: number;
+  /** Experimental transport selection, changed only in the lobby. */
+  connectionMode?: "platform" | "local-host" | "local-relay";
+  localHost?: {
+    id: string;
+    instanceId: string;
+    matchId: string;
+    players: RoomPlayer[];
+    startedAt: number;
+  };
 }
 
-/** The successful start transition always carries both independent states. */
+/** Bootstrap endpoint available only to the pinned browser host. */
+export interface RoomLocalRuntime {
+  matchId: string;
+  startedAt: number;
+  script: string;
+  scriptHash: string;
+  context: JsonValue;
+  liveRoom: boolean;
+}
+
+/** Cloud starts include a snapshot; local starts bootstrap in the host browser. */
 export interface RoomStart {
   presence: RoomPresence;
-  snapshot: RoomSnapshot;
+  snapshot?: RoomSnapshot;
 }
 
 /** Result of explicitly leaving a room. */

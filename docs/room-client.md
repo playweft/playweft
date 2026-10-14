@@ -84,3 +84,64 @@ For browser smoke testing, join a local room with two distinct platform
 identities, prepare/start, refresh the game, return to the lobby, then leave and
 dissolve. The iframe should initialize after refresh, both players should see
 the lobby transition, and each termination should return to the homepage.
+
+
+## Experimental browser host connections
+
+The owner-only Room settings menu exposes two lobby-only choices. `platform`
+keeps the existing Worker authority. `local-host` executes the game's existing
+Lua script in the browser that starts the match, prefers WebRTC DataChannels,
+and automatically falls back to platform WebSocket relay. The choices apply to
+Lua room games, without game-specific rules or URL checks. The legacy
+`local-relay` mode remains supported for existing rooms and transport tests,
+but is no longer offered in the settings UI.
+
+Only the pinned host dynamically imports the Lua runtime and downloads its WASM
+when a local match starts. Neither lobby entry nor joining as a player or
+spectator loads Lua. The PWA precache also excludes the Lua chunk and WASM.
+`GET /api/rooms/:roomId/local-runtime?instanceId=...` authenticates the pinned
+host and returns the room's already validated script, script hash and setup
+context. Other members obtain only their projected snapshots from that host.
+The Worker stores match metadata and manages membership; it does not execute
+local setup, actions, departure hooks or timers.
+
+The browser and Worker reuse `@playweft/runtime-lua` and the setup/action
+contexts, actor construction, per-viewer projections, timer operations and
+quota rules in `@playweft/runtime-core`. Action request IDs remain unchanged
+when retried over relay, preventing duplicate execution during a transport
+switch. Member departures use the game's `player_left` hook; ownership changes
+update `actor.isOwner` and `viewer.isOwner` without moving simulation authority.
+
+The first version uses a star topology with Cloudflare's public STUN server
+(`stun:stun.cloudflare.com:3478`) to discover additional direct connection
+candidates. No TURN server is configured. A direct connection may fail even on
+the same Wi-Fi; relay works while
+negotiation is pending and after a channel fails. Relay fallback keeps the same
+browser authority and state, rather than starting a second match on the Worker.
+The room owner selects the connection method from the lobby menu; the game
+view has no floating connection status overlay.
+
+This is an opt-in experiment: the simulation host has the full game state.
+Browser timers may run late while backgrounded. Refreshing or closing that
+browser loses the local match state; there is no authority migration or restore
+in this version. The room owner can return to the lobby to restart even if the
+simulation host is unavailable. While the authority is available, returning
+checks `on_return_to_room` in that browser; unavailable or faulted authority can
+be restarted through room management. Stale cloud state is never used for this
+permission check.
+
+For a smoke test, use the built-in Rock Paper Scissors demo with two browser
+sessions. Play a round in `local-host`, then interrupt the DataChannel and play
+another round over relay; the round and version should continue. No game asset
+changes are needed.
+
+
+### Game latency
+
+`platform.latency` reflects RTT to the selected game authority, not the room
+management socket when a browser hosts the game. The pinned local host reports
+0; other members use a correlated ping/pong over either DataChannel or the full
+platform relay path. Responses remain on the request's path. Host-to-member
+health probes never overwrite the host game's local latency. Route switches,
+connection loss and sample expiry clear the old reading. The notification adds
+`transport` and `status`, omitting `rttMs` while measuring or unavailable.

@@ -238,11 +238,25 @@ export function joinRoom(roomId: string): Promise<RoomJoin> {
   }).then(responseJson<RoomJoin>);
 }
 
-export function startRoom(roomId: string): Promise<RoomStart> {
+export function startRoom(roomId: string, hostInstanceId?: string): Promise<RoomStart> {
   return fetch(endpoint(`/api/rooms/${encodeURIComponent(roomId)}/start`), {
     method: "POST",
     credentials: "same-origin",
+    ...(hostInstanceId ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hostInstanceId }) } : {}),
   }).then(responseJson<RoomStart>);
+}
+
+export function getRoomLocalRuntime(roomId: string, instanceId: string): Promise<import("@playweft/game-protocol").RoomLocalRuntime> {
+  return fetch(endpoint(`/api/rooms/${encodeURIComponent(roomId)}/local-runtime?instanceId=${encodeURIComponent(instanceId)}`), {
+    credentials: "same-origin", cache: "no-store",
+  }).then(responseJson<import("@playweft/game-protocol").RoomLocalRuntime>);
+}
+
+export function setRoomConnectionMode(roomId: string, mode: NonNullable<RoomPresence["connectionMode"]>): Promise<RoomPresence> {
+  return fetch(endpoint(`/api/rooms/${encodeURIComponent(roomId)}/connection-mode`), {
+    method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  }).then(responseJson<RoomPresence>);
 }
 
 export function leaveRoom(roomId: string): Promise<RoomLeave> {
@@ -434,8 +448,9 @@ export function sendAction(
   }).then(responseJson<RoomActionResponse>);
 }
 
-export function connectRoom(roomId: string): WebSocket {
+export function connectRoom(roomId: string, instanceId?: string): WebSocket {
   const url = endpoint(`/api/rooms/${encodeURIComponent(roomId)}/connect`);
+  if (instanceId) url.searchParams.set("instanceId", instanceId);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return new WebSocket(url);
 }

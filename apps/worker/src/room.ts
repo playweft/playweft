@@ -542,7 +542,6 @@ export class GameRoom extends DurableObject<Env> {
         await this.saveMembers(members);
       } else {
         const nextOwnerPlayerId = this.nextOwnerPlayerId(members);
-        this.ensureOwnerSeat(nextOwnerPlayerId, members, config.maxPlayers);
         await this.saveMembershipAndOwnership(members, nextOwnerPlayerId);
       }
       await this.touch();
@@ -710,8 +709,6 @@ export class GameRoom extends DurableObject<Env> {
     if (!target) throw new RoomHttpError(404, "player is not in this room");
     if (target[0] === playerId)
       throw new RoomHttpError(409, "the room host already owns this room");
-    if (target[1].seat === undefined)
-      throw new RoomHttpError(409, "the new room host must be seated");
 
     target[1].ready = false;
     await this.saveOwnership(target[0], members);
@@ -787,7 +784,6 @@ export class GameRoom extends DurableObject<Env> {
     for (const [memberId, member] of Object.entries(members)) {
       if (memberId !== playerId) member.ready = false;
     }
-    this.ensureOwnerSeat(ownerPlayerId, members, config.maxPlayers);
     this.disposeRuntime();
     const meta = await this.meta();
     meta.phase = "lobby";
@@ -830,13 +826,6 @@ export class GameRoom extends DurableObject<Env> {
       const nextOwnerPlayerId = ownerLeft
         ? this.nextOwnerPlayerId(members)
         : ownerPlayerId;
-      if (ownerLeft) {
-        this.ensureOwnerSeat(
-          nextOwnerPlayerId,
-          members,
-          (await this.config()).maxPlayers,
-        );
-      }
       await this.saveMembershipAndOwnership(members, nextOwnerPlayerId);
       await this.touch();
       const presence = await this.presence();
@@ -909,17 +898,14 @@ export class GameRoom extends DurableObject<Env> {
       throw new RoomHttpError(400, "expected { seat: number | null }");
     }
     const playerId = this.playerId(request);
-    const [config, members, ownerPlayerId] = await Promise.all([
+    const [config, members] = await Promise.all([
       this.config(),
       this.members(),
-      this.ownerPlayerId(),
     ]);
     const member = members[playerId];
     if (!member)
       throw new RoomHttpError(403, "join the room before choosing a seat");
     if (input.seat === null) {
-      if (playerId === ownerPlayerId)
-        throw new RoomHttpError(409, "the room host must keep a seat");
       member.seat = undefined;
     } else {
       if (input.seat < 1 || input.seat > config.maxPlayers)
@@ -1588,29 +1574,6 @@ export class GameRoom extends DurableObject<Env> {
     return nextOwner[0];
   }
 
-  private ensureOwnerSeat(
-    ownerPlayerId: string,
-    members: Record<string, RoomMember>,
-    maxPlayers: number,
-  ): void {
-    const owner = members[ownerPlayerId];
-    if (!owner || owner.seat !== undefined) return;
-    const occupiedSeats = new Set(
-      Object.values(members)
-        .map((member) => member.seat)
-        .filter((seat): seat is number => seat !== undefined),
-    );
-    const seat = Array.from(
-      { length: maxPlayers },
-      (_, index) => index + 1,
-    ).find((candidate) => !occupiedSeats.has(candidate));
-    if (seat === undefined) {
-      throw new RoomHttpError(409, "the room host has no available seat");
-    }
-    owner.seat = seat;
-    owner.ready = false;
-  }
-
   private async deleteEmptyRoom(): Promise<void> {
     this.closeRoomSockets(4004, "room empty");
     this.disposeRuntime();
@@ -1743,11 +1706,12 @@ export class GameRoom extends DurableObject<Env> {
 
     const nextOwner = Object.entries(members)
       .filter(
-        ([playerId, member]) =>
-          member.seat !== undefined &&
-          isRecent(lastSeenByPlayer.get(playerId), HOST_OFFLINE_TIMEOUT_MS),
+        ([playerId]) => isRecent(lastSeenByPlayer.get(playerId), HOST_OFFLINE_TIMEOUT_MS),
       )
-      .sort(([, left], [, right]) => left.joinedAt - right.joinedAt)[0];
+      .sort(([, left], [, right]) =>
+        Number(left.seat === undefined) - Number(right.seat === undefined) ||
+        left.joinedAt - right.joinedAt,
+      )[0];
     if (!nextOwner || nextOwner[0] === ownerPlayerId) return;
 
     nextOwner[1].ready = false;

@@ -519,6 +519,7 @@ export class RoomSession {
     }
     this.connection.setHeartbeatRequired(
       Boolean(
+        (this.state.selfId && this.state.presence?.ownerId === this.state.selfId) ||
         this.state.presence?.players.some(
           (player) => player.id === this.state.selfId,
         ),

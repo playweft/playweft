@@ -33,6 +33,12 @@ revision, so even batched lobby/playing transitions create a fresh iframe.
 
 ## Resource lifetimes
 
+Hosts may spectate in the lobby, retain management permissions, and transfer
+ownership to either a player or a spectator. Ownership changes and returning
+to the lobby preserve seat choices. Only seated players count toward the
+starting roster and readiness requirements. Hosts keep an idle heartbeat even
+when spectating, so their room is not treated as abandoned while they are online.
+
 - A room route owns one session. Ending or unmounting disposes its connection,
   retry/heartbeat/probe timers, visibility listener and pending live actions.
 - Successful leave/dissolve, a missing room on those operations, a server

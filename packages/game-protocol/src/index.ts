@@ -613,6 +613,7 @@ export interface RoomPresence {
   phase: "lobby" | "playing";
   players: RoomPlayer[];
   spectators: RoomSpectator[];
+  /** Room manager's member ID; may belong to players or spectators. */
   ownerId: string;
   minPlayers: number;
   maxPlayers: number;

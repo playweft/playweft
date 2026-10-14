@@ -665,7 +665,7 @@ test("latency probes are acknowledged and spectators receive no idle heartbeat",
   socket.message({ type: "platform.ack", ackId: probe });
   assert.equal(f.session.getState().latency, 40);
   socket.message(
-    presence(4, "lobby", { players: [], spectators: [{ id: "self" }] }),
+    presence(4, "lobby", { ownerId: "other", players: [], spectators: [{ id: "self" }] }),
   );
   const before = socket.sent.length;
   f.advance(60_000);
@@ -1078,4 +1078,119 @@ test("stale ROOM_NOT_FOUND operation results cannot end a different game session
   pending.reject(new f.PlatformApiError('room missing', 404, undefined, undefined, 'ROOM_NOT_FOUND'));
   await operation;
   assert.equal(f.counts.ended, 0); assert.equal(f.session.getState().lifecycle, 'joined'); f.session.dispose();
+});
+
+test('spectating hosts keep an idle heartbeat, while ordinary spectators remain idle', async () => {
+  const f = fixture(); const socket = await f.join();
+  socket.message(presence(4, 'lobby', {ownerId: 'self', players: [], spectators: [{id: 'self'}]}));
+  const before = socket.sent.length; f.advance(20_000);
+  assert.ok(socket.sent.length > before);
+  socket.message(presence(5, 'lobby', {ownerId: 'other', players: [], spectators: [{id: 'self'}]}));
+  const after = socket.sent.length; f.advance(60_000);
+  assert.equal(socket.sent.length, after); f.session.dispose();
+});
+
+function spectatorHostBackend() {
+  const b = browser();
+  b.globals.structuredClone = structuredClone;
+  b.globals.crypto.getRandomValues = data => { data.fill(1); return data; };
+  const {GameRoom} = b.moduleAt('apps/worker/src/room.ts', {
+    'cloudflare:workers': {DurableObject: class {constructor(ctx) {this.ctx = ctx;}}},
+    '@playweft/runtime-lua': {}, '@playweft/runtime-core': {GameRuntimeError: class extends Error {}}, './runtime-registry': {},
+  });
+  const stored = new Map([['roomMeta', {
+    roomId: 'room', manifestUrl: 'https://game.example/playweft.json', phase: 'lobby', ownerPlayerId: 'host', presenceRevision: 0,
+    config: {maxPlayers: 2, minPlayers: 2, liveRoom: false, scriptHash: 'hash'},
+    members: {host: {actorId: 'host', joinedAt: 0, seat: 1, ready: false},
+      guest: {actorId: 'guest', joinedAt: 1, seat: 2, ready: true}, observer: {actorId: 'observer', joinedAt: 2, ready: false}},
+  }]]);
+  const room = new GameRoom({getWebSockets: () => [], storage: {
+    get: async key => structuredClone(stored.get(key)), put: async (key, value) => stored.set(key, structuredClone(value)),
+    delete: async key => stored.delete(key), deleteAlarm: async () => {}, deleteAll: async () => stored.clear(),
+  }}, {});
+  const seen = {};
+  room.touch = async () => {}; room.scheduleAlarm = async () => {}; room.runDueTimers = async () => {};
+  room.engine = async () => ({
+    setup(context) {seen.setup = context; return {state: {players: context.players.map(p => p.id)}, events: []};},
+    view(state, events, context) {seen.viewer = context.viewer; return {state, events};},
+    returnToRoom(_state, context) {seen.returnActor = context.actor; return true;},
+    playerLeft(state, context) {seen.leftActor = context.actor; return {state, events: []};},
+  });
+  return {room, stored, seen, async request(path, player = 'host', body) {
+    return room.fetch(new Request(`https://room.example/${path}`, {
+      method: 'POST', headers: {'X-Playweft-Player-Id': player, 'Content-Type': 'application/json'},
+      ...(body === undefined ? {} : {body: JSON.stringify(body)}),
+    }));
+  }};
+}
+
+test('host can spectate, transfer to an observer, and leave without forcing the successor to take a seat', async () => {
+  const f = spectatorHostBackend();
+  let response = await f.request('seat', 'host', {seat: null}); assert.equal(response.status, 200);
+  let lobby = await response.json(); assert.equal(lobby.ownerId, 'host'); assert.equal(lobby.players.length, 1);
+  assert.ok(lobby.spectators.some(p => p.id === 'host'));
+  response = await f.request('transfer-host', 'guest', {playerId: 'observer'}); assert.equal(response.status, 403);
+  response = await f.request('transfer-host', 'host', {playerId: 'observer'}); assert.equal(response.status, 200);
+  lobby = await response.json(); assert.equal(lobby.ownerId, 'observer'); assert.ok(lobby.spectators.some(p => p.id === 'observer'));
+  assert.equal(f.stored.get('roomMeta').members.observer.seat, undefined);
+  await f.request('seat', 'guest', {seat: null});
+  response = await f.request('leave', 'observer'); assert.equal(response.status, 200);
+  assert.equal(f.stored.get('roomMeta').ownerPlayerId, 'host');
+  assert.equal(f.stored.get('roomMeta').members.host.seat, undefined);
+});
+
+test('spectating host does not count toward required players; starts as an observer and remains one after returning to lobby', async () => {
+  const f = spectatorHostBackend(); await f.request('seat', 'host', {seat: null});
+  assert.equal((await f.request('start')).status, 409);
+  await f.request('seat', 'observer', {seat: 1});
+  assert.equal((await f.request('start')).status, 409, 'all participating players must be ready');
+  await f.request('ready', 'observer', {ready: true});
+  const response = await f.request('start'); assert.equal(response.status, 200);
+  assert.equal(f.seen.setup.match.ownerId, 'host');
+  assert.deepEqual(Array.from(f.seen.setup.players, p => p.id), ['observer', 'guest']);
+  assert.equal(f.seen.viewer.role, 'spectator'); assert.equal(f.seen.viewer.isOwner, true); assert.equal(f.seen.viewer.seat, undefined);
+  assert.equal((await f.request('seat', 'host', {seat: 1})).status, 409, 'roster is locked during play');
+  assert.equal((await f.request('return-to-room')).status, 200);
+  assert.equal(f.seen.returnActor.role, 'spectator'); assert.equal(f.stored.get('roomMeta').members.host.seat, undefined);
+});
+
+test('offline ownership may pass to an online spectator without assigning them a seat', async () => {
+  const f = spectatorHostBackend();
+  const meta = f.stored.get('roomMeta'); meta.ownerLastSeenAt = Date.now() - 60_000;
+  f.room.socketLastSeenByPlayer = () => new Map([['observer', Date.now()]]);
+  await f.room.transferOfflineHost();
+  assert.equal(f.stored.get('roomMeta').ownerPlayerId, 'observer');
+  assert.equal(f.stored.get('roomMeta').members.observer.seat, undefined);
+});
+
+test('lobby exposes spectating to seated hosts and management actions for spectator targets', () => {
+  const b = browser(); let index = 0;
+  const states = [true, {}, false, undefined];
+  const jsx = (type, props) => ({type, props});
+  const {default: Lobby} = b.moduleAt('apps/web/src/features/room/RoomLobby.tsx', {
+    react: {useState: () => [states[index++], () => {}]},
+    'react/jsx-runtime': {jsx, jsxs: jsx},
+    'lucide-react': {Crown: 'Crown', Eye: 'Eye', MoreHorizontal: 'MoreHorizontal', Share2: 'Share2', UserRound: 'UserRound'},
+    '@/app/i18n': {useI18n: () => ({locale: 'en', t: key => key})},
+    '@/components/Menu': {__esModule: true, default: 'Menu'},
+    './RoomIdCopy': {__esModule: true, default: 'RoomIdCopy'},
+    './RoomSeats': {__esModule: true, default: 'RoomSeats'},
+  });
+  function find(node, predicate) {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {for (const child of node) {const result = find(child, predicate); if (result) return result;} return;}
+    if (predicate(node)) return node;
+    return find(node.props?.children, predicate);
+  }
+  let target;
+  const controls = {isOwner: true, selfId: 'host', selfPlayer: {id: 'host'}, phase: 'lobby', spectatorCount: 1,
+    lobby: {ownerId: 'host', spectators: [{id: 'observer', name: 'Observer'}]},
+    chooseSeat: seat => {target = seat;}, transferHost: id => {target = id;}, kick: id => {target = id;}};
+  const tree = Lobby({roomId: 'room', controls});
+  const menu = find(tree, node => node.type === 'Menu');
+  const content = menu.props.children(after => after?.());
+  const spectate = find(content, node => node.type === 'button' && find(node, child => child.type === 'span' && child.props.children === 'switchToSpectating'));
+  assert.ok(spectate); spectate.props.onClick(); assert.equal(target, null);
+  const transfer = find(content, node => node.type === 'button' && node.props.children === 'makeHost');
+  transfer.props.onClick(); assert.equal(target, 'observer');
 });

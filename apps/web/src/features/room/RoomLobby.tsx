@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eye, MoreHorizontal, Share2, UserRound } from "lucide-react";
+import { Crown, Eye, MoreHorizontal, Share2, UserRound } from "lucide-react";
 import { useI18n } from "@/app/i18n";
 import Menu from "@/components/Menu";
 import RoomIdCopy from "./RoomIdCopy";
@@ -47,6 +47,8 @@ export default function RoomLobby({
     setChangeGameOpen,
     setDissolveDialogOpen,
     chooseSeat,
+    transferHost,
+    kick,
   } = controls;
   const [spectatorMenuOpen, setSpectatorMenuOpen] = useState(false);
   const [spectatorMenuAnchor, setSpectatorMenuAnchor] =
@@ -260,7 +262,7 @@ export default function RoomLobby({
         >
           {(closeMenu) => (
             <>
-              {selfPlayer && !isOwner && (
+              {selfPlayer && (
                 <>
                   <button
                     className="spectator-menu-action"
@@ -293,8 +295,23 @@ export default function RoomLobby({
                       <span className="spectator-menu-name">
                         {spectator.name ||
                           t("spectatorFallback", { number: index + 1 })}
+                        {spectator.id === lobby.ownerId && (
+                          <span className="host-crown" title={t("host")} aria-label={t("host")}>
+                            <Crown aria-hidden="true" />
+                          </span>
+                        )}
                       </span>
                       {spectator.id === selfId && <small>{t("you")}</small>}
+                      {isOwner && spectator.id !== selfId && (
+                        <div className="spectator-menu-management">
+                          <button type="button" onClick={() => closeMenu(() => void transferHost(spectator.id))}>
+                            {t("makeHost")}
+                          </button>
+                          <button type="button" className="menu-danger" onClick={() => closeMenu(() => void kick(spectator.id))}>
+                            {t("remove")}
+                          </button>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>

@@ -585,6 +585,12 @@ never authorization keys. `on_action` receives `{ protocolVersion, matchId,
 actionId, actionAt, version, actor }`; actor contains `{ id, role, seat?, name?,
 isOwner }`.
 
+Room ownership is independent of playing. `players` contains only seated
+participants; `match.ownerId` may identify a spectator outside that list.
+An actor/viewer may have `role = "spectator"` and `isOwner = true`. Use
+`isOwner` for explicit management actions and roster membership for gameplay.
+Host status does not automatically grant access to private player information.
+
 `match.randomSeed` is a platform-generated 128-bit random value, encoded as a
 fixed 32-character lowercase hexadecimal string. It is regenerated for every
 new match. Games may use it to initialize a deterministic PRNG; do not expose

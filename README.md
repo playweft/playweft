@@ -159,8 +159,9 @@ help remain in `game` because both the library and running games use them.
 ## Game URLs and browser history
 
 `/?game=example.com/demo/` is the shareable game entry. Games supporting both
-solo and room play show a mode choice; games supporting one mode enter it
-directly. Selecting a game on the homepage pushes this entry onto history.
+solo and room play show a mode choice by default; games supporting one mode
+enter it directly. `launch_mode: "solo"` skips the choice for dual-mode games;
+omitting it or specifying `"auto"` preserves the default behavior. Selecting a game on the homepage pushes this entry onto history.
 Choosing solo play replaces it with `/?game=example.com/demo/&mode=solo`;
 creating or joining a room from the entry replaces it with `/r/:roomId`.
 Entering a room code directly on the homepage pushes the room URL instead.
@@ -178,7 +179,11 @@ and the available entry choices without loading a game iframe.
 
 Browser Back returns to the page before the game entry. The platform's solo
 exit button and room termination replace the current entry with the homepage.
-Pending entry work is invalidated when the URL changes.
+Pending entry work is invalidated when the URL changes. A solo game with room
+support can create a lobby through `room.create` or the platform game menu.
+Successful creation replaces the solo entry with `/r/:roomId`; failures keep
+solo play active. The room game initializes afresh after the host starts it.
+Solo progress is not copied into the new match.
 
 ## Recommended games
 

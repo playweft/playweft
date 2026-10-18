@@ -3,6 +3,8 @@ import {
   PLAYWEFT_BRIDGE_VERSION,
   parseGameManifest,
   type GameManifest,
+  type GameMode,
+  type GameLaunchMode,
   type GameManifestIcon,
   type GameManifestLocalizedText,
   type GameManifestOrientation,
@@ -10,7 +12,7 @@ import {
 import { isGameTranslations, type GameTranslations } from "@/app/i18n";
 import { readAppLoadPolicy } from "@/app/app-load-policy";
 
-export type GameMode = "solo" | "room";
+export type { GameMode } from "@playweft/game-protocol";
 
 export interface DiscoveredGame {
   url: string;
@@ -27,6 +29,7 @@ export interface DiscoveredGame {
   themeColor?: string;
   orientation?: GameManifestOrientation;
   modes: GameMode[];
+  launchMode?: GameLaunchMode;
   liveRoom?: boolean;
 }
 
@@ -176,7 +179,9 @@ export function isStoredDiscoveredGame(
     (value.liveRoom === undefined || typeof value.liveRoom === "boolean") &&
     Array.isArray(value.modes) &&
     value.modes.length > 0 &&
-    value.modes.every((mode) => mode === "solo" || mode === "room")
+    value.modes.every((mode) => mode === "solo" || mode === "room") &&
+    (value.launchMode === undefined || value.launchMode === "auto" ||
+      (value.launchMode === "solo" && value.modes.includes("solo")))
   );
 }
 
@@ -248,6 +253,7 @@ function discoveredGame(
     ...(manifest.theme_color ? { themeColor: manifest.theme_color } : {}),
     ...(manifest.orientation ? { orientation: manifest.orientation } : {}),
     modes,
+    ...(manifest.launch_mode !== undefined ? { launchMode: manifest.launch_mode } : {}),
     ...(manifest.modes.room?.server.persistence === "live"
       ? { liveRoom: true }
       : {}),

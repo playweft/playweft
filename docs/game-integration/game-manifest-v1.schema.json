@@ -171,6 +171,15 @@
           }
         }
       }
+    },
+    "launch_mode": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "solo"
+      ],
+      "default": "auto",
+      "description": "Entry preference. auto or omission chooses the only mode or prompts for dual-mode games; solo launches solo directly."
     }
   },
   "$defs": {
@@ -310,5 +319,28 @@
       "minLength": 1,
       "maxLength": 2048
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "launch_mode"
+        ],
+        "properties": {
+          "launch_mode": {
+            "const": "solo"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "modes": {
+            "required": [
+              "solo"
+            ]
+          }
+        }
+      }
+    }
+  ]
 }

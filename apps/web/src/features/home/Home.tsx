@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { createGuestSession, createRoom } from "@/platform/platform-api";
+import { createGuestSession } from "@/platform/platform-api";
 import { useFeaturedGames } from "@/features/library/featured-games";
 import ErrorToast from "@/components/ErrorToast";
 import GameHelpDialog from "@/features/game/GameHelpDialog";
@@ -17,6 +17,8 @@ import {
   UnsupportedGameUrlError,
   probeGame,
 } from "@/features/game/game-discovery";
+import { createGameRoom } from "@/features/game/room-creation";
+import { gameLaunchMode } from "@/features/game/game-launch-mode";
 import { gameLaunchPath } from "@/features/game/game-launch-link";
 import { roomIdFromInput } from "@/features/room/room-code";
 import { parseLaunchInput } from "./launch-input";
@@ -25,7 +27,7 @@ import {
   persistFavoriteGames,
   readFavoriteGames,
 } from "@/features/library/favorite-games";
-import type { DiscoveredGame as RecentGame, GameMode } from "@/features/game/game-manifest";
+import type { DiscoveredGame as RecentGame } from "@/features/game/game-manifest";
 import { localizeGameDescription, localizeGameName, useI18n } from "@/app/i18n";
 import type { MenuPosition } from "@/components/Menu";
 import {
@@ -141,10 +143,7 @@ export default function Home({
     setError(undefined);
     setUnsupportedGame(undefined);
     try {
-      const resolvedNickname = await waitForIdentity();
-      await createGuestSession(resolvedNickname);
-      if (cancelled()) return;
-      const room = await createRoom(game.manifestUrl);
+      const room = await createGameRoom(game, waitForIdentity, cancelled);
       if (cancelled()) return;
       rememberGame(game);
       onEntryStatus(t("loadingGame"));
@@ -158,33 +157,25 @@ export default function Home({
 
   const launchGame = (
     game: ShelfGame,
-    mode?: GameMode,
+    mode?: string,
   ) => {
     const recentGame = normalizeLibraryGame(game);
-    const modes = recentGame.modes;
-    if (mode && !modes.includes(mode)) {
+    const selectedMode = gameLaunchMode(recentGame, mode);
+    if (selectedMode === "unavailable") {
       setError(t("gameModeUnavailable"));
       setLaunchChoice(recentGame);
       return;
     }
-    if (mode === "solo") {
+    if (selectedMode === "solo") {
       playSolo(recentGame);
       return;
     }
-    if (mode === "room") {
+    if (selectedMode === "room") {
       void createRoomForGame(recentGame);
       return;
     }
-    if (modes.includes("solo") && modes.includes("room")) {
-      setLaunchChoice(recentGame);
-      setLaunchChoiceRoomCode("");
-      return;
-    }
-    if (modes.includes("solo")) {
-      playSolo(recentGame);
-      return;
-    }
-    void createRoomForGame(recentGame);
+    setLaunchChoice(recentGame);
+    setLaunchChoiceRoomCode("");
   };
 
   const launchFromValue = async (
@@ -223,12 +214,7 @@ export default function Home({
         onNavigate(gameLaunchPath(game.manifestUrl));
         return;
       }
-      if (mode !== undefined && (mode !== "solo" || !game.modes.includes("solo"))) {
-        setError(t("gameModeUnavailable"));
-        setLaunchChoice(game);
-        return;
-      }
-      launchGame(game, mode === "solo" ? "solo" : undefined);
+      launchGame(game, mode);
     } catch (reason) {
       if (cancelled()) return;
       onEntryStatus(undefined);

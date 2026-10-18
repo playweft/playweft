@@ -145,3 +145,20 @@ platform relay path. Responses remain on the request's path. Host-to-member
 health probes never overwrite the host game's local latency. Route switches,
 connection loss and sample expiry clear the old reading. The notification adds
 `transport` and `status`, omitting `rttMs` while measuring or unavailable.
+
+
+## Solo entry and room creation
+
+`game-launch-mode.ts` resolves declared capabilities, the optional `auto`/`solo`
+Manifest entry preference and explicit URL mode in one place. Library metadata
+preserves `launchMode` without changing storage keys or invalidating legacy
+entries. Shared solo-first games replace the generic entry with `mode=solo`;
+room invites and explicit modes take precedence.
+
+`room-creation.ts` owns the authenticated create-room sequence used by Home and
+SoloHost. `SoloRoomCreation` coalesces calls, binds requests to one game, and
+invalidates pending work on exit, refresh or bridge replacement. SoloHost
+advertises `room.create` only when the loaded Manifest includes a room mode.
+The RPC dispatcher posts the result before its internal `afterReply` hook
+schedules navigation. App replaces the solo history entry with the created
+lobby; the game is mounted in room mode only after starting a new match.

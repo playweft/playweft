@@ -31,6 +31,7 @@ import {
   RpcFault,
   rpcPlatformFault,
 } from "@/platform/json-rpc";
+import { SoloRoomCreation } from "./room-creation";
 import { loadGameManifest } from "@/features/game/game-manifest";
 import { useGameViewport } from "@/features/game/use-game-viewport";
 
@@ -38,6 +39,8 @@ interface SoloHostProps {
   closing: boolean;
   game: RecentGame;
   nickname: string;
+  waitForIdentity(): Promise<string>;
+  onEnterRoom(roomId: string): void;
   onBack(): void;
 }
 
@@ -45,6 +48,8 @@ export default function SoloHost({
   closing,
   game,
   nickname,
+  waitForIdentity,
+  onEnterRoom,
   onBack,
 }: SoloHostProps) {
   const { locale, t } = useI18n();
@@ -52,6 +57,9 @@ export default function SoloHost({
   const [gameHelpOpen, setGameHelpOpen] = useState(false);
   const [loaded, setLoaded] = useState<LoadedGame>();
   const [loadError, setLoadError] = useState<string>();
+  const roomCreation = useRef<SoloRoomCreation | undefined>(undefined);
+  const closingRef = useRef(closing);
+  closingRef.current = closing;
   const [gameRevision, setGameRevision] = useState(0);
   const [frameReady, setFrameReady] = useState(false);
   const [isFavorite, setIsFavorite] = useState(() => isFavoriteGame(game));
@@ -116,6 +124,16 @@ export default function SoloHost({
   }, [closing]);
 
   useEffect(() => {
+    if (!loaded) return;
+    const creation = new SoloRoomCreation(loaded.game, {
+      waitForIdentity, onEnterRoom, onPendingChange: () => {},
+      isCancelled: () => closingRef.current,
+    });
+    roomCreation.current = creation;
+    return () => { creation.dispose(); if (roomCreation.current === creation) roomCreation.current = undefined; };
+  }, [loaded, waitForIdentity, onEnterRoom]);
+
+  useEffect(() => {
     if (!loaded || gameViewport.deferGameLoad) return;
     const capabilities = [
       ...new Set([
@@ -124,12 +142,16 @@ export default function SoloHost({
         "navigator.clipboard.readText",
         "languageModel.prompt",
         "languageModel.cancel",
+        ...(loaded.room ? ["room.create"] : []),
       ]),
     ];
+    const creation = roomCreation.current;
     const detachBridge = attachGameBridge({
       frame: iframe,
       origin: gameOrigin,
+      canConnect: () => !closingRef.current,
       onBeforeConnect() {
+        creation?.cancel();
         clipboard.cancelPending();
         userProfile.cancelPending();
         languageModel.cancelPending();
@@ -152,6 +174,19 @@ export default function SoloHost({
                 ...(nicknameRef.current ? { name: nicknameRef.current } : {}),
               },
             };
+          },
+        },
+        "room.create": {
+          async handle(params) {
+            if (params !== undefined && (params === null || typeof params !== "object" || Array.isArray(params) || Object.keys(params).length))
+              throw new RpcFault(JsonRpcErrorCode.InvalidParams, "room.create takes no parameters");
+            if (!creation) throw rpcPlatformFault("GAME_NOT_READY", "The game is not ready", true);
+            const room = await creation.create();
+            return { roomId: room.roomId };
+          },
+          afterReply(result) {
+            if (result && typeof result === "object" && !Array.isArray(result) && typeof result.roomId === "string")
+              creation?.enter(result.roomId);
           },
         },
         "room.action": {
@@ -210,6 +245,7 @@ export default function SoloHost({
       },
     });
     return () => {
+      creation?.cancel();
       clipboard.cancelPending();
       userProfile.cancelPending();
       languageModel.cancelPending();
@@ -352,6 +388,7 @@ export default function SoloHost({
           onRefresh={
             loaded
               ? () => {
+                  roomCreation.current?.cancel();
                   setFrameReady(false);
                   setGameRevision((revision) => revision + 1);
                 }

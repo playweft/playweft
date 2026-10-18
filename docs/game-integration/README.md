@@ -116,6 +116,12 @@ Key rules:
   orientation, Playweft first attempts the lock directly, then enters fullscreen
   and retries only when the browser indicates fullscreen is required.
 - Presence of `modes.solo` or `modes.room` determines where the game may run.
+- Optional `launch_mode` is `"auto"` or `"solo"`. `"auto"` and omission are
+  equivalent: a single supported mode launches directly; dual-mode games show
+  the mode picker. `"solo"` requires `modes.solo` and launches solo directly,
+  while keeping room play available. There is no room-first preference.
+  Explicit mode links override this preference; room invites always join their
+  specified room. This is a Playweft extension, not a standard PWA member.
 - `persistence: "durable"` persists authoritative state after each accepted
   action and permits Durable Object hibernation. `"live"` keeps active state in
   memory and routes actions over the room WebSocket. Live room activity timestamps
@@ -213,6 +219,49 @@ the platform has already loaded the package contract. Its result is:
 
 Room iframes are mounted only after the platform locks the roster. Do not
 enable gameplay until the first `game.state` notification arrives.
+
+### Create a room from solo play
+
+A solo game that also declares `modes.room` receives the `room.create`
+capability in `game.initialize`. Show a multiplayer button only when that
+capability is present.
+
+`room.create` takes no parameters and returns `{ roomId }`. It always creates a
+lobby for the currently loaded game's Manifest and uses the platform identity;
+a game cannot select another Manifest, a player identity, or transfer solo
+state through this call. The platform then replaces the solo URL with
+`/r/:roomId`. Players join and prepare in the lobby; starting the match creates
+a new iframe whose `game.initialize` reports `mode: "room"`. This does not
+change the mode of the running solo iframe or migrate its progress.
+
+For an existing JSON-RPC client:
+
+```js
+if (context.capabilities.includes("room.create")) {
+  multiplayerButton.onclick = () => rpcCall("room.create").catch(showRpcError);
+}
+```
+
+Or copy `/sdk/room.js` (and optionally `room.d.ts`) into your game's assets and
+bind it to the established MessagePort, like the language-model client:
+
+```js
+import { createRoomClient } from "./room.js";
+const playweft = { room: createRoomClient(gamePort) };
+multiplayerButton.onclick = () => playweft.room.create().catch(showRpcError);
+// Before replacing the port:
+// playweft.room.destroy();
+```
+
+The response is posted before the platform navigates; the game does not need
+to navigate itself. Concurrent calls share one creation.
+Failures keep the solo game mounted and allow retry. Calls after the solo game
+closes or its bridge is replaced cannot cause a late navigation.
+`ROOM_MODE_UNAVAILABLE` indicates missing room capability;
+`ROOM_CREATION_CANCELLED` indicates an obsolete solo transition.
+`ROOM_CREATION_FAILED` carries the creation error and a `retryable` flag for
+network/server failures. Parameters
+such as a different `manifestUrl` are rejected as invalid.
 
 ## 4. Receive state and submit actions
 

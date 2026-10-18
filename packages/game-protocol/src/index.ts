@@ -81,6 +81,9 @@ export type GameManifestOrientation =
   | "landscape-primary"
   | "landscape-secondary";
 
+export type GameMode = "solo" | "room";
+export type GameLaunchMode = "auto" | "solo";
+
 export interface GameManifestRoomMode {
   players: {
     min: number;
@@ -115,6 +118,8 @@ export interface GameManifest {
   theme_color?: string;
   orientation?: GameManifestOrientation;
   help_url?: string;
+  /** Omitted or auto preserves single-mode entry / dual-mode choice. */
+  launch_mode?: GameLaunchMode;
   modes: {
     solo?: Record<string, never>;
     room?: GameManifestRoomMode;
@@ -162,6 +167,10 @@ export function parseGameManifest(value: unknown): GameManifest {
 
   const metadata = parseManifestMetadata(manifest);
   const modes = parseManifestModes(manifest.modes);
+  if (manifest.launch_mode !== undefined && manifest.launch_mode !== "auto" && manifest.launch_mode !== "solo")
+    failManifest("launch_mode must be auto or solo");
+  if (manifest.launch_mode === "solo" && !modes.solo)
+    failManifest("launch_mode solo requires modes.solo");
   if (manifest.$schema !== undefined && typeof manifest.$schema !== "string") {
     failManifest("$schema must be a string");
   }
@@ -178,6 +187,7 @@ export function parseGameManifest(value: unknown): GameManifest {
     },
     start_url: manifest.start_url as string,
     ...metadata,
+    ...(manifest.launch_mode !== undefined ? { launch_mode: manifest.launch_mode as GameLaunchMode } : {}),
     modes,
   };
 }

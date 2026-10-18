@@ -137,6 +137,10 @@ export default function App() {
     else window.history.pushState({}, "", nextPath);
     setLocation(readAppLocation());
   }, []);
+  const enterCreatedRoom = useCallback((roomId: string) => {
+    navigate(`/r/${roomId}`, true);
+    setSoloGame(undefined);
+  }, [navigate]);
   const openSoloGame = useCallback((game: RecentGame) => {
     void prepareGameOrientation(game.orientation);
     const nextPath = gameLaunchPath(game.manifestUrl, "solo");
@@ -232,6 +236,8 @@ export default function App() {
           closing={soloClosing}
           key={visibleSoloGame.manifestUrl}
           game={visibleSoloGame}
+          waitForIdentity={waitForIdentity}
+          onEnterRoom={enterCreatedRoom}
           nickname={nickname}
           onBack={() => navigate("/", true)}
         />

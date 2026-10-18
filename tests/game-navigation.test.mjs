@@ -80,6 +80,10 @@ function fixture(initial = "/", selectedGame = game, overrides = {}) {
     "@/features/library/recent-games": { readRecentGames: () => [], persistRecentGames: () => [], saveRecentGame() {} },
     "@/platform/platform-api": { getPlatformSession: async () => ({}), createGuestSession: async () => {}, createRoom: overrides.createRoom ?? (async () => ({ roomId: "FZCC" })) },
   };
+  common["@playweft/game-protocol"] = load("../../../packages/game-protocol/src/index.ts", {}, window);
+  common["@/platform/json-rpc"] = load("platform/json-rpc.ts", common, window);
+  common["@/features/game/room-creation"] = load("features/game/room-creation.ts", common, window);
+  common["@/features/game/game-launch-mode"] = load("features/game/game-launch-mode.ts", common, window);
   common["./launch-input"] = load("features/home/launch-input.ts", common, window);
   const App = load("app/App.tsx", { ...common, react: appRenderer.react,
     "@/app/use-pwa-update": { usePwaUpdate: () => ({}) },
@@ -245,4 +249,31 @@ test("pasted share links preserve encoded Manifest query parameters and validate
   assert.deepEqual(probed, [queryGame.manifestUrl]); assert.equal(f.history.length, 3);
   assert.ok(find(f.home, "LaunchChoiceDialog")); assert.equal(find(f.tree, "SoloHost"), undefined);
   assert.equal(find(f.home, "ErrorToast").props.message, "gameModeUnavailable"); f.dispose();
+});
+
+
+test('auto and omitted launch_mode preserve capability-based entry for solo, room and dual games',async()=>{
+  for(const launchMode of [undefined,'auto'])for(const modes of [['solo'],['room'],['solo','room']]){
+    const f=fixture('/?game=game.example/demo/',{...game,modes,launchMode});await f.settle();
+    assert.equal(Boolean(find(f.tree,'SoloHost')),modes.length===1&&modes[0]==='solo');
+    assert.equal(Boolean(find(f.tree,'RoomHost')),modes.length===1&&modes[0]==='room');
+    assert.equal(Boolean(find(f.home,'LaunchChoiceDialog')),modes.length===2);f.dispose();
+  }
+});
+test('solo preference bypasses selection for cards and share links, replaces the shared entry and restores on refresh',async()=>{
+  const preferred={...game,launchMode:'solo'};
+  const f=fixture('/',preferred);await f.settle();find(f.home,'GameShelf').props.onSelect(preferred);await f.settle();
+  assert.ok(find(f.tree,'SoloHost'));assert.equal(f.history.length,3);assert.equal(find(f.home,'LaunchChoiceDialog'),undefined);
+  const soloUrl=f.window.location.pathname+f.window.location.search;
+  const refreshed=fixture(soloUrl,preferred);await refreshed.settle();assert.ok(find(refreshed.tree,'SoloHost'));refreshed.dispose();
+  find(f.tree,'SoloHost').props.onEnterRoom('FZCC');await f.settle();assert.ok(find(f.tree,'RoomHost'));assert.equal(f.history.length,3);
+  await f.back();assert.equal(f.window.location.pathname+f.window.location.search,'/');f.dispose();
+  const shared=fixture('/?game=game.example/demo/',preferred);await shared.settle();assert.ok(find(shared.tree,'SoloHost'));assert.equal(shared.history.length,2);shared.dispose();
+});
+test('explicit room links and room invitations override solo preference; invalid modes still fail',async()=>{
+  const preferred={...game,launchMode:'solo'};
+  for(const path of ['/?game=game.example/demo/&mode=room','/r/FZCC']){
+    const f=fixture(path,preferred);await f.settle();assert.ok(find(f.tree,'RoomHost'));assert.equal(find(f.tree,'SoloHost'),undefined);assert.equal(f.history.length,2);f.dispose();
+  }
+  const invalid=fixture('/?game=game.example/demo/&mode=unknown',preferred);await invalid.settle();assert.equal(find(invalid.tree,'SoloHost'),undefined);assert.ok(find(invalid.home,'ErrorToast'));invalid.dispose();
 });

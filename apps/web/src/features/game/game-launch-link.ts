@@ -1,4 +1,4 @@
-export function gameLaunchPath(manifestUrl: string, mode?: "solo"): string {
+export function gameLaunchPath(manifestUrl: string, mode?: "solo" | "room"): string {
   const manifest = new URL(manifestUrl);
   if (/\/playweft\.json$/i.test(manifest.pathname)) {
     manifest.pathname = manifest.pathname.slice(0, -"playweft.json".length);
@@ -10,7 +10,7 @@ export function gameLaunchPath(manifestUrl: string, mode?: "solo"): string {
       ? `${manifest.host}${manifest.pathname}${manifest.search}`
       : manifest.toString();
   const encodedGame = encodeURIComponent(game).replaceAll("%2F", "/");
-  return `/?game=${encodedGame}${mode === "solo" ? "&mode=solo" : ""}`;
+  return `/?game=${encodedGame}${mode ? `&mode=${mode}` : ""}`;
 }
 
 export function gameLaunchLink(manifestUrl: string): string {
@@ -27,7 +27,7 @@ export function gameUrlFromExternalLaunch(
   return /^[a-z][a-z\d+.-]*:/i.test(value) ? value : `https://${value}`;
 }
 
-/** A shared game link chooses a mode; only an explicit mode restores solo play. */
+/** Explicit mode links override the Manifest entry preference. */
 export function gameModeFromExternalLaunch(location: string): string | undefined {
   if (!gameUrlFromExternalLaunch(location)) return undefined;
   return new URL(location, window.location.origin).searchParams.get("mode") ?? undefined;

@@ -7,7 +7,7 @@ import { readAppLoadPolicy } from "@/app/app-load-policy";
 
 export type FeaturedGame = DiscoveredGame;
 
-declare const __PLAYWEFT_FEATURED_GAME_SOURCES__: unknown;
+import { siteConfig } from "@/app/site-config";
 
 const MAX_LIST_DEPTH = 4;
 const MAX_REMOTE_LISTS = 16;
@@ -16,13 +16,7 @@ const REMOTE_LIST_TIMEOUT_MS = 8_000;
 const FEATURED_LIST_CACHE_NAME = "playweft:featured-lists:v1";
 const FEATURED_LIST_CACHED_AT_HEADER = "X-Playweft-Cached-At";
 
-const DEFAULT_FEATURED_GAME_SOURCES: unknown[] = [
-  { manifestUrl: "/games/rps/playweft.json" },
-];
-
-const configuredSources = Array.isArray(__PLAYWEFT_FEATURED_GAME_SOURCES__)
-  ? __PLAYWEFT_FEATURED_GAME_SOURCES__
-  : DEFAULT_FEATURED_GAME_SOURCES;
+const configuredSources = siteConfig.featuredGames;
 const platformBaseUrl = new URL("/", window.location.href).href;
 
 let featuredGamesPromise: Promise<FeaturedGame[]> | undefined;

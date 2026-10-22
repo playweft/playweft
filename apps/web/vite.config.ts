@@ -4,9 +4,10 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { parseSiteConfig } from "./src/app/site-config-schema";
 
-const defaultFeaturedGamesPath = fileURLToPath(
-  new URL("./featured-games.local.json", import.meta.url),
+const defaultSiteConfigPath = fileURLToPath(
+  new URL("./site.config.local.json", import.meta.url),
 );
 const gameManifestSchemaPath = fileURLToPath(
   new URL(
@@ -71,47 +72,20 @@ function gameManifestSchema(): Plugin {
   };
 }
 
-function embeddedFeaturedGameSources(): unknown[] | null {
-  const configuredPath = process.env.PLAYWEFT_FEATURED_GAMES_FILE;
+function embeddedSiteConfig() {
+  const configuredPath = process.env.PLAYWEFT_SITE_CONFIG_FILE;
   const filePath = configuredPath
     ? resolve(process.env.INIT_CWD ?? process.cwd(), configuredPath)
-    : defaultFeaturedGamesPath;
+    : defaultSiteConfigPath;
   if (!existsSync(filePath)) {
-    if (configuredPath) {
-      throw new Error(`Featured-games file does not exist: ${filePath}`);
-    }
-    return null;
+    if (configuredPath) throw new Error(`Site config file does not exist: ${filePath}`);
+    return parseSiteConfig({});
   }
-
-  let value: unknown;
   try {
-    value = JSON.parse(readFileSync(filePath, "utf8"));
+    return parseSiteConfig(JSON.parse(readFileSync(filePath, "utf8")));
   } catch (error) {
-    throw new Error(
-      `Could not parse featured-games file ${filePath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    throw new Error(`Could not load site config ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
   }
-  if (
-    !Array.isArray(value) ||
-    value.some((item) => {
-      if (item === null || typeof item !== "object" || Array.isArray(item))
-        return true;
-      const source = item as Record<string, unknown>;
-      const hasGame =
-        typeof source.manifestUrl === "string" &&
-        source.manifestUrl.trim().length > 0;
-      const hasList =
-        typeof source.listUrl === "string" && source.listUrl.trim().length > 0;
-      return hasGame === hasList;
-    })
-  ) {
-    throw new Error(
-      `Featured-games file ${filePath} must contain { manifestUrl } or { listUrl } entries`,
-    );
-  }
-  return value;
 }
 
 export default defineConfig({
@@ -139,9 +113,7 @@ export default defineConfig({
     }),
   ],
   define: {
-    __PLAYWEFT_FEATURED_GAME_SOURCES__: JSON.stringify(
-      embeddedFeaturedGameSources(),
-    ),
+    __PLAYWEFT_SITE_CONFIG__: JSON.stringify(embeddedSiteConfig()),
   },
   server: {
     port: 9133,

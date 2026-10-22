@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Playweft site configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "featuredGames": {
+      "type": "array",
+      "description": "Omit for the bundled RPS game; an empty array disables recommendations.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "manifestUrl": {
+            "type": "string",
+            "minLength": 1,
+            "description": "HTTP(S) or relative URL without credentials; validated at build time."
+          },
+          "listUrl": {
+            "type": "string",
+            "minLength": 1,
+            "description": "HTTP(S) or relative URL without credentials; validated at build time."
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "manifestUrl"
+            ]
+          },
+          {
+            "required": [
+              "listUrl"
+            ]
+          }
+        ]
+      }
+    },
+    "banners": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "image",
+          "alt",
+          "href"
+        ],
+        "properties": {
+          "image": {
+            "type": "string",
+            "minLength": 1,
+            "description": "HTTP(S) or relative URL without credentials; validated at build time."
+          },
+          "alt": {
+            "type": "string",
+            "pattern": "\\S",
+            "description": "Accessible link and image description."
+          },
+          "href": {
+            "type": "string",
+            "minLength": 1,
+            "description": "HTTP(S) or relative URL without credentials; validated at build time."
+          }
+        }
+      }
+    }
+  }
+}

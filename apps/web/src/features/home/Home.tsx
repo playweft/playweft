@@ -1,3 +1,4 @@
+import SiteBanners from "./SiteBanners";
 import { useEffect, useMemo, useState } from "react";
 import { createGuestSession } from "@/platform/platform-api";
 import { useFeaturedGames } from "@/features/library/featured-games";
@@ -379,6 +380,7 @@ export default function Home({
 
         {!suppressGameShelves && (
           <div className="game-shelves">
+            <SiteBanners />
             {renderedFavoriteGames.length > 0 && (
               <GameShelf
                 title={t("favorites")}

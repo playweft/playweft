@@ -1,0 +1,9 @@
+{
+  "$schema": "./site.config.schema.json",
+  "featuredGames": [
+    {
+      "manifestUrl": "/games/rps/playweft.json"
+    }
+  ],
+  "banners": []
+}

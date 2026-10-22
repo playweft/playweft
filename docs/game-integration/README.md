@@ -320,6 +320,79 @@ JSON-RPC failures use standard `-32600` through `-32603` codes. Platform
 failures use `-32000` with a stable string code and retry hint in `error.data`.
 A game-rule rejection is a successful RPC result with `accepted: false`.
 
+## Local game storage
+
+Both solo and room bridges advertise the following capabilities:
+
+| RPC method | Parameters | Result |
+| --- | --- | --- |
+| `localStorage.getItem` | `{ key: string }` | `string` or `null` |
+| `localStorage.setItem` | `{ key: string, value: string }` | `null` |
+| `localStorage.removeItem` | `{ key: string }` | `null` |
+| `localStorage.clear` | none | `null` |
+| `localStorage.key` | `{ index: number }` | `string` or `null` |
+| `localStorage.length` | none | number of entries |
+
+Use the platform API for local saves inside a game iframe. Safari may give a
+cross-origin iframe session-only browser storage even when `setItem()` succeeds.
+The platform stores these saves in its top-level, first-party IndexedDB instead.
+This API needs no Manifest permission declaration and is available without an account.
+
+Copy `/sdk/local-storage.js` (and optionally `local-storage.d.ts`) into your game assets. The SDK accepts the established bridge MessagePort:
+
+```js
+import { createLocalStorageClient } from "./local-storage.js";
+
+const playweft = { localStorage: createLocalStorageClient(gamePort) };
+await playweft.localStorage.setItem("my-game:progress", JSON.stringify(save));
+const raw = await playweft.localStorage.getItem("my-game:progress");
+const count = await playweft.localStorage.length();
+// Before replacing or closing the bridge:
+playweft.localStorage.destroy();
+```
+
+All SDK operations return Promises. Keys and values are converted to strings;
+games serialize their own JSON. The length is an asynchronous **method**, not a
+numeric property. SDK mutation methods resolve to `undefined`; the underlying
+RPC represents this as `null`. `key(index)` enumerates keys in ascending IndexedDB
+string-key order and returns `null` outside the range.
+
+The platform derives the namespace from the validated game frame's origin
+(scheme, hostname and port). Requests cannot supply an origin. Paths and Manifest
+IDs are not separate storage namespaces: games on the same origin share storage
+and should prefix their keys. `clear()` clears that origin only. Data is local to
+the browser profile and platform origin, independent of player sign-in.
+
+The database `playweft-game-storage`, version 1, contains:
+
+- `entries`, keyed by `[origin, key]`: `origin`, `key`, `value`, `sizeBytes`, `updatedAt`;
+  with a `byOrigin` index.
+- `origins`, keyed by `origin`: `origin`, `entryCount`, `usageBytes`, `updatedAt`.
+
+Logical size is `2 * (key.length + value.length)` bytes, rather than a claim about
+physical disk usage. Data and accounting update in the same transaction. Keys
+are limited to 4,096 UTF-16 code units, a value to 16 MiB, and an origin to
+128 MiB of logical data. Browser disk quota can be lower. Entries have no TTL;
+the platform does not evict one game's progress to make room for another.
+
+A successful mutation response follows **transaction completion**, using strict
+IndexedDB durability. Operations on one bridge connection execute in arrival
+order, including reads following writes. Across connections, ordinary last-write
+semantics apply; this API does not offer an atomic read/modify/write operation.
+Never defer all saving until unload, and wait for the Promise before reporting
+that progress has been saved.
+
+Read failures reject; `getItem()` returns `null` only for a successfully read,
+missing key. Stable platform errors include `STORAGE_QUOTA_EXCEEDED` and
+`STORAGE_UNAVAILABLE`. Invalid arguments use JSON-RPC `-32602`. A client timeout
+means commit status is **unknown**, not that the write was rolled back. Mutations
+are idempotent, so retry the latest desired value instead of an older snapshot.
+
+The platform requests persistent storage where supported, without treating a
+denial as a failed write. Browser data deletion and storage eviction remain
+possible; this is local storage, not a cloud backup. Do not silently fall back to
+iframe localStorage when the capability is missing or the platform reports an error.
+
 ## 5. Request protected features at runtime
 
 Game iframes allow accelerometer, gyroscope, magnetometer, and Gamepad API access for

@@ -34,6 +34,7 @@ import {
 import { SoloRoomCreation } from "./room-creation";
 import { loadGameManifest } from "@/features/game/game-manifest";
 import { useGameViewport } from "@/features/game/use-game-viewport";
+import { createLocalStorageHandlers, LOCAL_STORAGE_CAPABILITIES } from "./local-storage";
 
 interface SoloHostProps {
   closing: boolean;
@@ -138,6 +139,7 @@ export default function SoloHost({
     const capabilities = [
       ...new Set([
         ...PLATFORM_WINDOW_CAPABILITIES,
+        ...LOCAL_STORAGE_CAPABILITIES,
         "user.getProfile",
         "navigator.clipboard.readText",
         "languageModel.prompt",
@@ -158,6 +160,7 @@ export default function SoloHost({
         windowDialogs.cancelPending();
       },
       handlers: {
+        ...createLocalStorageHandlers(gameOrigin),
         "game.initialize": {
           handle() {
             if (!loaded.manifest.modes.solo) {

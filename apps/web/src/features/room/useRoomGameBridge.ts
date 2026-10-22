@@ -33,10 +33,12 @@ import {
 import { useRoomPlayerProfileAccess } from "./RoomPlayerProfile";
 import { RoomSession, type RoomSessionState } from "./RoomSession";
 import { errorMessage } from "./room-errors";
+import { createLocalStorageHandlers, LOCAL_STORAGE_CAPABILITIES } from "@/features/game/local-storage";
 
 const capabilities = [
   ...new Set([
     ...PLATFORM_WINDOW_CAPABILITIES,
+    ...LOCAL_STORAGE_CAPABILITIES,
     "user.getProfile",
     "navigator.clipboard.readText",
     "languageModel.prompt",
@@ -148,6 +150,7 @@ export function useRoomGameBridge({
           });
       },
       handlers: {
+        ...createLocalStorageHandlers(origin),
         "game.initialize": {
           async handle() {
             assertBridgeOpen();

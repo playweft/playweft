@@ -1,5 +1,11 @@
-import { ArrowLeft } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowLeft, ChevronRight } from "lucide-react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import {
   applyAppLoadPolicy,
   readAppLoadPolicy,
@@ -163,7 +169,11 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
       <main className="settings-dialog-scroll">
         <div className="settings-dialog-content">
           <section className="settings-card" aria-label={t("language")}>
-            <label className="settings-list-item" htmlFor="settings-language">
+            <label
+              className="settings-list-item settings-list-select"
+              htmlFor="settings-language"
+              onClick={openSelectPicker}
+            >
               <span>{t("language")}</span>
               <select
                 id="settings-language"
@@ -178,12 +188,18 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
                   </option>
                 ))}
               </select>
+              <ChevronRight
+                className="settings-select-chevron"
+                size={18}
+                aria-hidden="true"
+              />
             </label>
           </section>
           <section className="settings-card" aria-label={t("appLoadingMode")}>
             <label
-              className="settings-list-item"
+              className="settings-list-item settings-list-select"
               htmlFor="settings-app-load-policy"
+              onClick={openSelectPicker}
             >
               <span>{t("appLoadingMode")}</span>
               <select
@@ -201,6 +217,11 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
                 <option value="update-prompt">{t("updatePrompt")}</option>
                 <option value="local-only">{t("localOnly")}</option>
               </select>
+              <ChevronRight
+                className="settings-select-chevron"
+                size={18}
+                aria-hidden="true"
+              />
             </label>
           </section>
           {cloudflareStatus?.enabled && (
@@ -234,8 +255,9 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
                       {cloudflareAccounts &&
                         cloudflareAccounts.accounts.length > 0 && (
                           <label
-                            className="settings-list-item"
+                            className="settings-list-item settings-list-select"
                             htmlFor="settings-cloudflare-account"
+                            onClick={openSelectPicker}
                           >
                             <span>{t("cloudflareAccount")}</span>
                             <select
@@ -257,6 +279,11 @@ export default function SettingsDialog({ onBack }: { onBack(): void }) {
                                 </option>
                               ))}
                             </select>
+                            <ChevronRight
+                              className="settings-select-chevron"
+                              size={18}
+                              aria-hidden="true"
+                            />
                           </label>
                         )}
                       {!cloudflareStatus.scopes?.includes("ai.write") && (
@@ -300,4 +327,23 @@ function cloudflareOAuthFailureFromLocation(): boolean {
   return (
     new URL(window.location.href).searchParams.get("cloudflare") === "failed"
   );
+}
+
+function openSelectPicker(event: MouseEvent<HTMLLabelElement>) {
+  const select = event.currentTarget.querySelector("select");
+  if (
+    !select ||
+    select.disabled ||
+    select.contains(event.target as Node) ||
+    typeof select.showPicker !== "function"
+  )
+    return;
+  select.focus({ preventScroll: true });
+  try {
+    select.showPicker();
+    // Avoid the label forwarding another click to a picker we just opened.
+    event.preventDefault();
+  } catch {
+    // Leave the label's native focus/click behavior intact if the picker is unavailable.
+  }
 }

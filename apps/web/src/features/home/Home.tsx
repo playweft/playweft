@@ -1,4 +1,6 @@
 import SiteBanners from "./SiteBanners";
+import MobileSearch from "./MobileSearch";
+import { Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createGuestSession } from "@/platform/platform-api";
 import { useFeaturedGames } from "@/features/library/featured-games";
@@ -103,7 +105,6 @@ export default function Home({
     () => new Set(favoriteGames.map((game) => game.manifestId)),
     [favoriteGames],
   );
-  const roomIdInput = parseLaunchInput(gameUrl).kind === "room";
   const rememberGame = (game: RecentGame) => {
     saveRecentGame(game);
     const nextRecentGames = readRecentGames();
@@ -324,59 +325,46 @@ export default function Home({
 
   return (
     <div className="site-shell">
-      <header className="topbar">
+      <header className="topbar home-topbar">
         <a className="brand" href="/" aria-label={t("playweftHome")}>
           <img className="brand-mark" src="/favicon.svg" alt="" />
           <span>playweft</span>
         </a>
-        <span className="topbar-label">{t("playGamesTogether")}</span>
+        <form
+          className="launch-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void launchFromValue(gameUrl);
+          }}
+        >
+          <label className="sr-only" htmlFor="game-url">
+            {t("gameUrlOrRoomCode")}
+          </label>
+          <div className="url-input">
+            <input
+              id="game-url"
+              type="search"
+              required
+              autoComplete="off"
+              enterKeyHint="go"
+              placeholder={t("gameLinkOrRoomCode")}
+              value={gameUrl}
+              onChange={(event) => setGameUrl(event.target.value)}
+            />
+            <button className="launch-submit" disabled={!gameUrl.trim()} type="submit"
+              aria-label={t("openGameOrRoom")}>
+              <Search size={20} aria-hidden="true" />
+            </button>
+          </div>
+        </form>
+        <MobileSearch value={gameUrl} onChange={setGameUrl} onSubmit={() => void launchFromValue(gameUrl)} />
         <PlayerProfileMenu
           nickname={nickname}
           onNicknameChange={onNicknameChange}
         />
       </header>
       <main className="home">
-        <section
-          className="launch-section"
-          id="new-room"
-          aria-labelledby="launch-title"
-        >
-          <h1 id="launch-title" className="sr-only">
-            {t("createRoom")}
-          </h1>
-          <form
-            className="launch-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void launchFromValue(gameUrl);
-            }}
-          >
-            <label className="sr-only" htmlFor="game-url">
-              {t("gameUrlOrRoomCode")}
-            </label>
-            <div className="url-input">
-              <span className="url-icon" aria-hidden="true">
-                ⌁
-              </span>
-              <input
-                id="game-url"
-                type="search"
-                required
-                autoComplete="off"
-                placeholder={t("pasteGameUrlOrRoomCode")}
-                value={gameUrl}
-                onChange={(event) => setGameUrl(event.target.value)}
-              />
-            </div>
-            <button
-              className="button primary"
-              disabled={!gameUrl.trim()}
-              type="submit"
-            >
-              {roomIdInput ? t("joinRoom") : t("createRoom")}
-            </button>
-          </form>
-        </section>
+        <h1 className="sr-only">{t("playGamesTogether")}</h1>
 
         {!suppressGameShelves && (
           <div className="game-shelves">

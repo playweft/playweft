@@ -46,6 +46,31 @@ test('Manifest preference propagates to discovered and persisted library metadat
   assert.equal(isStoredDiscoveredGame({...loaded.game,launchMode:'auto'}),true);
   assert.equal(isStoredDiscoveredGame({...loaded.game,modes:['room']}),false);
 });
+test('disabled application caching still revalidates manifests and loads a changed version',async()=>{
+  const requests=[];
+  let current=manifest;
+  const load=modules({
+    caches:{open:()=>assert.fail('disabled application caching must not read or write offline manifests')},
+    fetch:async(url,options)=>{requests.push({url,options});return Response.json(current);},
+  });
+  const {loadGameManifest}=load('apps/web/src/features/game/game-manifest.ts');
+  const url='https://game.example/demo/playweft.json';
+  assert.equal((await loadGameManifest(url)).game.version,'1.0.0');
+  current={...manifest,version:'1.1.0',start_url:'./updated.html'};
+  const updated=await loadGameManifest(url);
+  assert.equal(updated.game.version,'1.1.0');
+  assert.equal(updated.game.url,'https://game.example/demo/updated.html');
+  assert.equal(requests.length,2,'each opening must check the network');
+  assert.ok(requests.every(request=>request.url===url&&request.options.cache==='no-cache'));
+});
+test('disabled application caching never falls back to a saved manifest on network failure',async()=>{
+  const load=modules({
+    caches:{open:()=>assert.fail('disabled application caching must not fall back to an old manifest')},
+    fetch:async()=>{throw new TypeError('offline');},
+  });
+  const {loadGameManifest}=load('apps/web/src/features/game/game-manifest.ts');
+  await assert.rejects(loadGameManifest('https://game.example/demo/playweft.json'),/offline/);
+});
 function creationFixture(overrides={}){
   const timers=new Map();let sequence=0;
   const load=modules({window:{setTimeout:fn=>{timers.set(++sequence,fn);return sequence;},clearTimeout:id=>timers.delete(id)}});

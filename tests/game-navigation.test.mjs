@@ -196,7 +196,7 @@ test("pasted room links join directly using the current origin and push one hist
     await f.settle();
     find(f.home, "input").props.onChange({ target: { value: ` ${origin}/r/fzcc/?invite=1 ` } }); await f.settle();
     const form = find(f.home, "form");
-    assert.equal(find(form, "button").props.children, "joinRoom");
+    assert.equal(find(form, "button").props["aria-label"], "openGameOrRoom");
     form.props.onSubmit({ preventDefault() {} }); await f.settle();
     assert.ok(find(f.tree, "RoomHost")); assert.equal(f.window.location.pathname, "/r/FZCC"); assert.equal(f.history.length, 3);
     await f.back(); assert.equal(f.window.location.pathname, "/"); f.dispose();
@@ -276,4 +276,13 @@ test('explicit room links and room invitations override solo preference; invalid
     const f=fixture(path,preferred);await f.settle();assert.ok(find(f.tree,'RoomHost'));assert.equal(find(f.tree,'SoloHost'),undefined);assert.equal(f.history.length,2);f.dispose();
   }
   const invalid=fixture('/?game=game.example/demo/&mode=unknown',preferred);await invalid.settle();assert.equal(find(invalid.tree,'SoloHost'),undefined);assert.ok(find(invalid.home,'ErrorToast'));invalid.dispose();
+});
+
+test('mobile search shares input with the desktop form and submits room links through the same entry flow', async () => {
+  const f = fixture('/'); await f.settle();
+  find(f.home, 'MobileSearch').props.onChange('https://platform.example/r/FZCC/'); await f.settle();
+  assert.equal(find(f.home, 'input').props.value, 'https://platform.example/r/FZCC/');
+  find(f.home, 'MobileSearch').props.onSubmit(); await f.settle();
+  assert.equal(f.window.location.pathname, '/r/FZCC');
+  assert.ok(find(f.tree, 'RoomHost')); f.dispose();
 });

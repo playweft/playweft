@@ -316,7 +316,9 @@ async function fetchManifestText(url: string): Promise<string> {
       const response = await fetch(url, {
         headers: { Accept: "application/json" },
         mode: "cors",
-        cache: "no-store",
+        // Always validate freshness, including when application caching is
+        // disabled. HTTP validators can reuse an unchanged response via 304.
+        cache: "no-cache",
         signal: controller.signal,
       });
       if (!response.ok) {

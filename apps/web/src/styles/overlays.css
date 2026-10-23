@@ -303,6 +303,23 @@
   white-space: nowrap;
 }
 
+.settings-list-select {
+  gap: 12px;
+  cursor: pointer;
+  transition: background-color 0.16s ease;
+}
+
+.settings-list-select select {
+  margin-left: auto;
+  min-width: 0;
+}
+
+.settings-select-chevron {
+  flex: 0 0 18px;
+  color: #9aa0a6;
+  pointer-events: none;
+}
+
 .settings-list-button {
   width: 100%;
   border: 0;
@@ -312,39 +329,46 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .settings-list-button:hover {
+  .settings-list-button:hover,
+  .settings-list-select:hover {
     background: #f0f0f0;
     outline: 0;
   }
 }
 
-.settings-list-button:focus-visible {
+.settings-list-button:focus-visible,
+.settings-list-select:focus-within {
   background: #f0f0f0;
   outline: 0;
 }
 
-.settings-list-button:active {
+.settings-list-button:active,
+.settings-list-select:active {
   background: #e9e9e9;
 }
 
 .settings-list-item select {
   max-width: 10em;
   min-height: 36px;
-  padding: 0 26px 0 8px;
+  padding: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  outline: 0;
+  box-shadow: none;
+  cursor: pointer;
   background-color: transparent;
   color: #5e666d;
   font: inherit;
   font-size: 0.86rem;
   text-align: right;
+  text-align-last: right;
 }
 
-.settings-list-item select:hover,
-.settings-list-item select:focus-visible {
-  background-color: #f1f3f4;
+.settings-list-select:hover select,
+.settings-list-select:focus-within select {
   color: #202124;
-  outline: 0;
 }
 
 .settings-list-item select:disabled {
@@ -1234,5 +1258,11 @@
   .game-menu,
   .game-menu-backdrop {
     animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-list-select {
+    transition: none;
   }
 }

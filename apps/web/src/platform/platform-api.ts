@@ -1,5 +1,6 @@
 import type {
   JsonValue,
+  RoomServer,
   RoomActionResponse,
   RoomActionResult,
   RoomJoin,
@@ -99,6 +100,8 @@ export interface CreatedRoom {
 
 export interface RoomLaunch {
   manifestUrl: string;
+  /** Immutable runtime contract captured when a client-managed room was created. */
+  initialization?: RoomInitialization;
 }
 
 export interface PlatformSessionStatus {
@@ -346,12 +349,23 @@ export function returnRoomToLobby(roomId: string): Promise<RoomPresence> {
   ).then(responseJson<RoomPresence>);
 }
 
-export function createRoom(manifestUrl: string): Promise<CreatedRoom> {
+export type RoomCreateOptions = Partial<RoomConfiguration> & { server?: RoomServer };
+
+export interface RoomConfiguration { minPlayers: number; maxPlayers: number; lobby: "platform" | "game" }
+
+export function setRoomConfiguration(roomId: string, configuration: Partial<RoomConfiguration>): Promise<RoomPresence> {
+  return fetch(endpoint(`/api/rooms/${encodeURIComponent(roomId)}/configuration`), {
+    method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+    body: JSON.stringify(configuration),
+  }).then(responseJson<RoomPresence>);
+}
+
+export function createRoom(manifestUrl: string, configuration?: Partial<RoomConfiguration>, initialization?: RoomInitialization): Promise<CreatedRoom> {
   return fetch(endpoint("/api/rooms"), {
     method: "POST",
     credentials: "same-origin",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ manifestUrl }),
+    body: JSON.stringify({ manifestUrl, ...(configuration ? { configuration } : {}), ...(initialization ? { initialization } : {}) }),
   }).then(responseJson<CreatedRoom>);
 }
 

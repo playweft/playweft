@@ -184,7 +184,7 @@ export default {
       }
 
       const match =
-        /^\/api\/rooms\/([a-zA-Z0-9_-]{1,128})\/(game|launch|membership|local-runtime|connection-mode|initialize|join|start|leave|seat|ready|profile-avatar|kick|transfer-host|dissolve|return-to-room|state|actions|connect)$/.exec(
+        /^\/api\/rooms\/([a-zA-Z0-9_-]{1,128})\/(game|launch|membership|local-runtime|connection-mode|configuration|initialize|join|start|leave|seat|ready|profile-avatar|kick|transfer-host|dissolve|return-to-room|state|actions|connect)$/.exec(
           url.pathname,
         );
       if (!match) return Response.json({ error: "not found" }, { status: 404 });

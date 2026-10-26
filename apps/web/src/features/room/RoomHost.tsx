@@ -30,8 +30,9 @@ export default function RoomHost(props: RoomHostProps) {
   const controls = useRoomControls(session, state, props.onBack);
   const iframe = useRef<HTMLIFrameElement>(null);
   const playing = controls.phase === "playing";
+  const gameViewActive = playing || controls.useGameLobby;
   const gameViewport = useGameViewport(
-    playing ||
+    gameViewActive ||
       shouldShowWeChatLandscapeGuidance(state.loadedGame?.game.orientation),
     state.loadedGame?.game,
   );
@@ -42,6 +43,7 @@ export default function RoomHost(props: RoomHostProps) {
     gameName: controls.gameName,
     nickname: props.nickname,
     deferred: gameViewport.deferGameLoad,
+    enabled: playing || controls.supportsGameLobby,
   });
 
   useEffect(() => {
@@ -83,8 +85,8 @@ export default function RoomHost(props: RoomHostProps) {
     return <RoomEntryLoadingState />;
 
   return (
-    <div className={`room-shell ${playing ? "room-playing" : ""}`}>
-      {!playing && (
+    <div className={`room-shell ${gameViewActive ? "room-playing" : ""}`}>
+      {!gameViewActive && (
         <RoomHeader
           gameName={controls.gameName}
           nickname={props.nickname}
@@ -93,7 +95,7 @@ export default function RoomHost(props: RoomHostProps) {
         />
       )}
       <main className="room-host">
-        {!playing && <RoomLobby roomId={props.roomId} controls={controls} />}
+        {!gameViewActive && <RoomLobby roomId={props.roomId} controls={controls} />}
         <RoomGameView
           controls={controls}
           gameViewport={gameViewport}

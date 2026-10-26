@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {resolve,dirname} from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
-import {createRoomClient} from '../apps/web/public/sdk/room.js';
+import {createRoomClient,createRoomsClient} from '../apps/web/public/sdk/room.js';
 const root=new URL('../',import.meta.url).pathname;
 const json=value=>JSON.parse(JSON.stringify(value));
 function modules(extra={}){
@@ -30,10 +30,10 @@ function modules(extra={}){
 }
 const manifest={manifest_version:1,id:'./',version:'1.0.0',protocol:{min:1,max:1},start_url:'./',name:'Mode test',
   modes:{solo:{},room:{players:{min:1,max:2},server:{runtime:'lua',entry:'./game.lua',persistence:'durable'}}}};
-test('Manifest accepts only auto/solo preferences and requires solo capability for solo preference',()=>{
+test('Manifest accepts auto/solo/choose preferences and requires solo capability for solo preference',()=>{
   const {parseGameManifest}=modules()('packages/game-protocol/src/index.ts');
   assert.equal(parseGameManifest(manifest).launch_mode,undefined);
-  for(const value of ['auto','solo'])assert.equal(parseGameManifest({...manifest,launch_mode:value}).launch_mode,value);
+  for(const value of ['auto','solo','choose'])assert.equal(parseGameManifest({...manifest,launch_mode:value}).launch_mode,value);
   for(const value of ['room','both','solo-first',null,{},true])assert.throws(()=>parseGameManifest({...manifest,launch_mode:value}),/launch_mode/);
   assert.throws(()=>parseGameManifest({...manifest,modes:{room:manifest.modes.room},launch_mode:'solo'}),/requires modes.solo/);
 });
@@ -126,4 +126,68 @@ test('room SDK coalesces duplicate clicks, exposes errors, retries, and cleans u
   const second=room.create();port.reply({id:port.messages[1].id,result:{roomId:'ROOM'}});assert.deepEqual(await second,{roomId:'ROOM'});
   const pending=room.create();room.destroy();await assert.rejects(pending,error=>error.code==='BRIDGE_CLOSED');
   await assert.rejects(room.create(),error=>error.code==='BRIDGE_CLOSED');
+});
+
+test('minimal manifests open directly and declare a room server without modes or player limits', async () => {
+  const value = { ...manifest, room: { server: manifest.modes.room.server } }; delete value.modes;
+  const load = modules({fetch: async () => Response.json(value)});
+  const {parseGameManifest} = load('packages/game-protocol/src/index.ts');
+  const parsed = parseGameManifest(value);
+  assert.deepEqual(json(parsed.modes), {solo:{}});
+  const loaded = await load('apps/web/src/features/game/game-manifest.ts').loadGameManifest('https://game.example/demo/playweft.json');
+  assert.equal(loaded.game.embeddedLobby, true); assert.deepEqual(json(loaded.game.modes), ['solo','room']);
+  assert.equal(loaded.room.minPlayers, 1); assert.equal(loaded.room.maxPlayers, 32);
+  assert.throws(() => parseGameManifest({...value,modes:manifest.modes}), /not both/);
+  delete value.room; assert.deepEqual(json(parseGameManifest(value).modes), {solo:{}});
+});
+const roomState = (revision = 1, changes = {}) => ({roomId:'ROOM',revision,phase:'lobby',ownerId:'self',selfId:'self',
+  players:[{id:'self',seat:1,ready:false}],spectators:[],minPlayers:1,maxPlayers:4,lobby:'game',inviteUrl:'https://platform.example/r/ROOM',
+  permissions:{setConfiguration:true,setReady:false,setSeat:true,start:true,leave:true},...changes});
+test('rooms SDK returns one EventTarget handle, confirmed immutable state, and rejects joining another room', async () => {
+  const port=new Port(),rooms=createRoomsClient(port),first=rooms.create({minPlayers:3,maxPlayers:4,lobby:'platform'});
+  assert.equal(first,rooms.create());assert.equal(port.messages.length,1);assert.equal(port.messages[0].method,'rooms.create');
+  assert.deepEqual(port.messages[0].params,{minPlayers:3,maxPlayers:4,lobby:'platform'});
+  port.reply({id:port.messages[0].id,result:roomState()});const room=await first;
+  assert.ok(room instanceof EventTarget);assert.equal(rooms.current,room);assert.equal(room.id,'ROOM');
+  assert.equal(await rooms.create(),room);assert.equal(await rooms.join('ROOM'),room);
+  await assert.rejects(rooms.join('OTHER'),error=>error.code==='ROOM_ALREADY_JOINED');assert.equal(port.messages.length,1);
+  let changes=0;room.addEventListener('statechange',()=>changes++);
+  const configured=room.setConfiguration({maxPlayers:3});assert.equal(room.getConfiguration().maxPlayers,4);
+  port.reply({id:port.messages.at(-1).id,result:roomState(2,{maxPlayers:3})});await configured;
+  assert.equal(room.getConfiguration().maxPlayers,3);assert.equal(changes,1);
+  assert.throws(()=>{room.state.players[0].seat=9;},TypeError);
+  port.reply({method:'room.stateChanged',params:roomState(1)});assert.equal(changes,1);
+  port.reply({method:'room.stateChanged',params:roomState(3,{maxPlayers:3,phase:'playing'})});assert.equal(changes,2);
+  let closes=0;room.addEventListener('close',()=>closes++);
+  const leave=room.leave(),request=port.messages.at(-1);port.reply({method:'room.closed',params:{reason:'left'}});
+  port.reply({id:request.id,result:null});await leave;assert.equal(room.closed,true);assert.equal(closes,1);assert.equal(rooms.current,null);
+  await assert.rejects(room.start(),error=>error.code==='ROOM_CLOSED');
+  const next=rooms.create();port.reply({id:port.messages.at(-1).id,result:roomState()});assert.notEqual(await next,room);
+  rooms.destroy();assert.equal(rooms.current,null);
+});
+test('rooms SDK serializes different openings, retries failures and rejects pending work on bridge teardown', async () => {
+  const port=new Port(),rooms=createRoomsClient(port),join=rooms.join('ROOM');
+  assert.equal(join,rooms.join('ROOM'));await assert.rejects(rooms.create(),e=>e.code==='ROOM_OPERATION_PENDING');
+  port.reply({id:port.messages[0].id,error:{code:-32000,message:'missing',data:{code:'ROOM_NOT_FOUND'}}});
+  await assert.rejects(join,e=>e.code==='ROOM_NOT_FOUND');
+  const pending=rooms.create();rooms.destroy();await assert.rejects(pending,e=>e.code==='BRIDGE_CLOSED');
+});
+
+test('games without a room declaration expose the embedded host and resolve creation servers against the Manifest', async () => {
+  const value={...manifest};delete value.modes;
+  const load=modules({fetch:async()=>Response.json({...value,start_url:'/client/index.html'})});
+  const {loadGameManifest,roomInitializationForServer}=load('apps/web/src/features/game/game-manifest.ts');
+  const loaded=await loadGameManifest('https://game.example/packages/demo/playweft.json');
+  assert.equal(loaded.room,undefined);assert.equal(loaded.game.embeddedLobby,true);
+  const server={runtime:'lua',entry:'./online.lua',persistence:'live'};
+  const initialization=roomInitializationForServer(loaded.game,server);
+  assert.equal(initialization.serverUrl,'https://game.example/packages/demo/online.lua');assert.equal(initialization.liveRoom,true);
+  assert.equal(initialization.gameVersion,loaded.game.version);
+  for(const entry of ['https://foreign.example/game.lua','https://user:pass@game.example/game.lua','javascript:alert(1)'])
+    assert.throws(()=>roomInitializationForServer(loaded.game,{...server,entry}));
+  for(const invalid of [{...server,rules:{}},{...server,runtime:'js'},{...server,persistence:'other'},{...server,entry:''}])
+    assert.throws(()=>roomInitializationForServer(loaded.game,invalid));
+  const {roomCreateOptionsFromRpcParams,roomConfigurationFromRpcParams}=load('apps/web/src/features/room/room-lobby-bridge.ts');
+  assert.deepEqual(json(roomCreateOptionsFromRpcParams({server,maxPlayers:4})),{server,maxPlayers:4});
+  assert.throws(()=>roomConfigurationFromRpcParams({server}),error=>error.rpcCode===-32602);
 });

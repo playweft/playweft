@@ -55,8 +55,11 @@ interface RoomConfig {
   liveRoom: boolean;
 }
 
+type RoomInitialization = Omit<RoomConfig, "script" | "scriptHash">;
+
 interface RoomLaunch {
   manifestUrl: string;
+  initialization?: RoomInitialization;
 }
 
 interface RoomState {
@@ -82,6 +85,9 @@ interface StoredAction {
 
 
 interface RoomMeta {
+  /** The runtime was bound atomically by rooms.create rather than a Manifest join. */
+  clientManaged?: boolean;
+  configuration?: { minPlayers?: number; maxPlayers?: number; lobby?: "platform" | "game" };
   connectionMode?: RoomPresence["connectionMode"];
   localHost?: RoomPresence["localHost"];
   roomId: string;
@@ -193,6 +199,8 @@ export class GameRoom extends DurableObject<Env> {
           return Response.json(await this.enqueue(() => this.start(request)));
         case "GET /local-runtime":
           return Response.json(await this.enqueue(() => this.localRuntime(request)), { headers: { "Cache-Control": "no-store" } });
+        case "POST /configuration":
+          return Response.json(await this.enqueue(() => this.setConfiguration(request)));
         case "POST /connection-mode":
           return Response.json(await this.enqueue(() => this.setConnectionMode(request)));
         case "POST /leave":
@@ -342,12 +350,18 @@ export class GameRoom extends DurableObject<Env> {
     if (!isRecord(input) || typeof input.manifestUrl !== "string") {
       throw new RoomHttpError(400, "expected { manifestUrl }");
     }
+    const configuration = input.configuration === undefined ? undefined : validateRoomConfiguration(input.configuration);
     const manifestUrl = normalizeManifestUrl(input.manifestUrl);
     const roomId = this.roomId(request);
     const existing = await this.ctx.storage.get<RoomMeta>("roomMeta");
     if (existing !== undefined) {
       throw new RoomHttpError(409, "room has already been created");
     }
+    const initialization = input.initialization === undefined ? undefined : validateRoomInitialization(input.initialization, manifestUrl);
+    if (initialization && (configuration?.minPlayers ?? initialization.minPlayers) > (configuration?.maxPlayers ?? initialization.maxPlayers))
+      throw new RoomHttpError(400, "minPlayers must not exceed maxPlayers");
+    // Compile before publishing room metadata: failed creation leaves no joinable room.
+    const config = initialization ? await this.compileConfig(initialization, new URL(request.url).origin) : undefined;
     await this.ctx.storage.put("roomMeta", {
       roomId,
       manifestUrl,
@@ -356,15 +370,19 @@ export class GameRoom extends DurableObject<Env> {
       presenceRevision: 0,
       ownerLastSeenAt: Date.now(),
       members: {},
+      ...(configuration ? { configuration } : {}),
+      ...(config ? { config, clientManaged: true } : {}),
     });
     await this.touch();
     return { manifestUrl };
   }
 
   private async launch(): Promise<RoomLaunch> {
-    const { manifestUrl } = await this.meta();
+    const { manifestUrl, config, clientManaged } = await this.meta();
     await this.touch();
-    return { manifestUrl };
+    if (!clientManaged || !config) return { manifestUrl };
+    const { script: _script, scriptHash: _hash, ...initialization } = config;
+    return { manifestUrl, initialization };
   }
 
   private async changeGame(request: Request): Promise<RoomLaunch> {
@@ -395,6 +413,8 @@ export class GameRoom extends DurableObject<Env> {
     delete meta.localHost;
     meta.phase = "lobby";
     meta.config = undefined;
+    delete meta.clientManaged;
+    delete meta.configuration;
     this.bumpPresenceRevision(meta);
     await this.saveMeta(meta);
     await this.ctx.storage.delete("gameState");
@@ -404,36 +424,39 @@ export class GameRoom extends DurableObject<Env> {
     return { manifestUrl };
   }
 
+  private async setConfiguration(request: Request): Promise<RoomPresence> {
+    const meta = await this.meta();
+    const playerId = this.playerId(request);
+    if (playerId !== meta.ownerPlayerId || !meta.members[playerId])
+      throw new RoomHttpError(403, "only the room host can configure the room");
+    if (meta.phase !== "lobby") throw new RoomHttpError(409, "configuration can only change in the lobby");
+    const input = validateRoomConfiguration(await parseRequestJson(request));
+    const previous = await this.config();
+    const next = { minPlayers: previous.minPlayers, maxPlayers: previous.maxPlayers, ...(meta.configuration?.lobby ? { lobby: meta.configuration.lobby } : {}), ...input };
+    if (next.minPlayers > next.maxPlayers)
+      throw new RoomHttpError(400, "minPlayers must not exceed maxPlayers");
+    if (Object.values(meta.members).some(member => member.seat != null && member.seat > next.maxPlayers))
+      throw new RoomHttpError(409, "an occupied seat exceeds maxPlayers");
+    if (next.minPlayers === previous.minPlayers && next.maxPlayers === previous.maxPlayers && next.lobby === meta.configuration?.lobby) return this.presence();
+    meta.configuration = next;
+    for (const member of Object.values(meta.members)) member.ready = false;
+    this.bumpPresenceRevision(meta);
+    await this.saveMeta(meta);
+    const presence = await this.presence();
+    this.broadcast(presence);
+    return presence;
+  }
+
   private async initialize(request: Request): Promise<RoomPresence> {
     await this.launch();
     const input = await parseRequestJson(request);
-    if (
-      !isRecord(input) ||
-      typeof input.serverUrl !== "string" ||
-      typeof input.gameId !== "string" ||
-      typeof input.gameVersion !== "string"
-    ) {
-      throw new RoomHttpError(
-        400,
-        "expected { gameId, gameVersion, serverUrl, runtime, minPlayers, maxPlayers, liveRoom? }",
-      );
-    }
     const meta = await this.meta();
-    const gameId = validateGameId(input.gameId, meta.manifestUrl);
-    const gameVersion = validateGameVersion(input.gameVersion);
-    const serverUrl = validateServerUrl(input.serverUrl, meta.manifestUrl);
+    const initialization = validateRoomInitialization(input, meta.manifestUrl);
+    const { gameId, gameVersion, serverUrl, runtime, minPlayers, maxPlayers, liveRoom } = initialization;
 
-    if (typeof input.runtime !== "string" || !isRuntimeKind(input.runtime)) {
-      throw new RoomHttpError(400, "runtime must be a supported runtime kind");
-    }
-    const runtime = input.runtime;
-
-    const minPlayers = validatePlayerLimit(input.minPlayers, "minPlayers");
-    const maxPlayers = validatePlayerLimit(input.maxPlayers, "maxPlayers");
-    if (minPlayers > maxPlayers)
+    const effective = { minPlayers, maxPlayers, ...meta.configuration };
+    if (effective.minPlayers > effective.maxPlayers)
       throw new RoomHttpError(400, "minPlayers must not exceed maxPlayers");
-    const liveRoom = input.liveRoom === true;
-
     const existing = await this.storedConfig();
     if (existing) {
       if (
@@ -453,36 +476,20 @@ export class GameRoom extends DurableObject<Env> {
       return this.presence();
     }
 
-    const script = await fetchServerSource(
-      serverUrl,
-      new URL(request.url).origin,
-      this.bindings.ASSETS,
-    );
+    // setup() runs only after the platform locks the roster at game start.
+    meta.config = await this.compileConfig(initialization, new URL(request.url).origin);
+    this.bumpPresenceRevision(meta);
+    await this.saveMeta(meta);
+    await this.touch();
+    return this.presence();
+  }
+
+  private async compileConfig(initialization: RoomInitialization, platformOrigin: string): Promise<RoomConfig> {
+    const script = await fetchServerSource(initialization.serverUrl, platformOrigin, this.bindings.ASSETS);
     const scriptHash = await hash(script);
-    const engine = await createRuntime(runtime, script);
-    try {
-      // Compile once now so an invalid script fails before anybody joins.
-      // setup() runs only after the platform locks the roster at game start.
-      meta.config = {
-        gameId,
-        gameVersion,
-        serverUrl,
-        runtime,
-        script,
-        scriptHash,
-        minPlayers,
-        maxPlayers,
-        liveRoom,
-      };
-      this.bumpPresenceRevision(meta);
-      await this.saveMeta(meta);
-      await this.touch();
-      return this.presence();
-    } catch (error) {
-      throw error;
-    } finally {
-      engine.dispose();
-    }
+    const engine = await createRuntime(initialization.runtime, script);
+    try { return { ...initialization, script, scriptHash }; }
+    finally { engine.dispose(); }
   }
 
   private async join(
@@ -1451,7 +1458,7 @@ export class GameRoom extends DurableObject<Env> {
         "room has no valid game runtime; initialize it first",
       );
     }
-    return config;
+    return { ...config, ...(await this.meta()).configuration };
   }
 
   private async storedConfig(): Promise<RoomConfig | undefined> {
@@ -2008,8 +2015,9 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private async presence(): Promise<RoomPresence> {
-    const { config, phase, members, ownerPlayerId, presenceRevision, roomId, connectionMode, localHost } =
-      await this.meta();
+    const meta = await this.meta();
+    const { phase, members, ownerPlayerId, presenceRevision, roomId, connectionMode, localHost } = meta;
+    const config = meta.config ? { ...meta.config, ...meta.configuration } : undefined;
     if (!config) {
       throw new RoomHttpError(
         409,
@@ -2047,6 +2055,7 @@ export class GameRoom extends DurableObject<Env> {
       ownerId: members[ownerPlayerId]?.actorId ?? "",
       minPlayers: config.minPlayers,
       maxPlayers: config.maxPlayers,
+      ...(meta.configuration?.lobby ? { lobby: meta.configuration.lobby } : {}),
       connectionMode: connectionMode ?? "platform",
       ...(localHost && phase === "playing" ? { localHost } : {}),
     };
@@ -2419,4 +2428,32 @@ function canonicalJson(value: JsonValue): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function validateRoomConfiguration(value: unknown): { minPlayers?: number; maxPlayers?: number; lobby?: "platform" | "game" } {
+  if (!isRecord(value) || Object.keys(value).some(key => key !== "minPlayers" && key !== "maxPlayers" && key !== "lobby"))
+    throw new RoomHttpError(400, "expected { minPlayers?, maxPlayers? }");
+  if (value.lobby !== undefined && value.lobby !== "platform" && value.lobby !== "game") throw new RoomHttpError(400, "lobby must be platform or game");
+  const minPlayers = value.minPlayers === undefined ? undefined : validatePlayerLimit(value.minPlayers, "minPlayers");
+  const maxPlayers = value.maxPlayers === undefined ? undefined : validatePlayerLimit(value.maxPlayers, "maxPlayers");
+  if (minPlayers !== undefined && maxPlayers !== undefined && minPlayers > maxPlayers)
+    throw new RoomHttpError(400, "minPlayers must not exceed maxPlayers");
+  return { ...(minPlayers !== undefined ? { minPlayers } : {}), ...(maxPlayers !== undefined ? { maxPlayers } : {}), ...(value.lobby ? { lobby: value.lobby as "platform" | "game" } : {}) };
+}
+
+function validateRoomInitialization(input: unknown, manifestUrl: string): RoomInitialization {
+  if (!isRecord(input) || typeof input.serverUrl !== "string" || typeof input.gameId !== "string" || typeof input.gameVersion !== "string" ||
+      Object.keys(input).some(key => !["gameId", "gameVersion", "serverUrl", "runtime", "minPlayers", "maxPlayers", "liveRoom"].includes(key)))
+    throw new RoomHttpError(400, "expected { gameId, gameVersion, serverUrl, runtime, minPlayers, maxPlayers, liveRoom? }");
+  const gameId = validateGameId(input.gameId, manifestUrl);
+  const gameVersion = validateGameVersion(input.gameVersion);
+  const serverUrl = validateServerUrl(input.serverUrl, manifestUrl);
+  if (typeof input.runtime !== "string" || !isRuntimeKind(input.runtime))
+    throw new RoomHttpError(400, "runtime must be a supported runtime kind");
+  if (input.liveRoom !== undefined && typeof input.liveRoom !== "boolean")
+    throw new RoomHttpError(400, "liveRoom must be boolean");
+  const minPlayers = validatePlayerLimit(input.minPlayers, "minPlayers");
+  const maxPlayers = validatePlayerLimit(input.maxPlayers, "maxPlayers");
+  if (minPlayers > maxPlayers) throw new RoomHttpError(400, "minPlayers must not exceed maxPlayers");
+  return { gameId, gameVersion, serverUrl, runtime: input.runtime, minPlayers, maxPlayers, liveRoom: input.liveRoom === true };
 }

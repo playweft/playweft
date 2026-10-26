@@ -192,6 +192,11 @@ export default function RoomLobby({
           className="lobby-menu"
           onClose={() => setLobbyMenuOpen(false)}
         >
+          {controls.supportsGameLobby && (
+            <button type="button" role="menuitem" onClick={() => { setLobbyMenuOpen(false); controls.showGameLobby(); }}>
+              {t("gameLobby")}
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"

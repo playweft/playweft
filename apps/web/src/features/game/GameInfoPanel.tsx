@@ -8,6 +8,7 @@ import {
 import {
   Check,
   CircleHelp,
+  DoorOpen,
   Link2,
   Maximize2,
   Power,
@@ -38,6 +39,7 @@ interface GameInfoPanelProps {
   onEnableLandscapeCompatibility?(): void;
   onEnterFullscreen?(): void;
   onRefresh?(): void;
+  onShowPlatformLobby?(): void;
   onShowHelp?(): void;
   onToggleFavorite?(): void;
   landscapeCompatibilityRotation?: LandscapeCompatibilityRotation;
@@ -55,6 +57,7 @@ export default function GameInfoPanel({
   onEnableLandscapeCompatibility,
   onEnterFullscreen,
   onRefresh,
+  onShowPlatformLobby,
   onShowHelp,
   onToggleFavorite,
   landscapeCompatibilityRotation,
@@ -244,11 +247,18 @@ export default function GameInfoPanel({
           onEnterFullscreen ||
           onEnableLandscapeCompatibility ||
           onRefresh ||
+          onShowPlatformLobby ||
           onShowHelp ||
           onToggleFavorite) && (
           <>
             <hr className="game-info-quick-actions-divider" />
             <div className="game-info-quick-actions">
+              {onShowPlatformLobby && (
+                <button type="button" onClick={() => close(onShowPlatformLobby)}>
+                  <span className="game-info-quick-action-icon"><DoorOpen aria-hidden="true" /></span>
+                  <span className="game-info-quick-action-label">{t("platformLobby")}</span>
+                </button>
+              )}
               {onToggleFavorite && (
                 <button
                   type="button"

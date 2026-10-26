@@ -10,8 +10,7 @@
     "version",
     "protocol",
     "start_url",
-    "name",
-    "modes"
+    "name"
   ],
   "properties": {
     "$schema": {
@@ -167,6 +166,14 @@
                   ]
                 }
               }
+            },
+            "lobby": {
+              "enum": [
+                "platform",
+                "game"
+              ],
+              "default": "platform",
+              "description": "Use the platform lobby, or let this game render its own lobby."
             }
           }
         }
@@ -176,10 +183,24 @@
       "type": "string",
       "enum": [
         "auto",
-        "solo"
+        "solo",
+        "choose"
       ],
       "default": "auto",
-      "description": "Entry preference. auto or omission chooses the only mode or prompts for dual-mode games; solo launches solo directly."
+      "description": "Omission or auto opens directly; choose prompts for games supporting both modes. solo remains a compatibility alias."
+    },
+    "room": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "server"
+      ],
+      "properties": {
+        "server": {
+          "$ref": "#/properties/modes/properties/room/properties/server"
+        }
+      },
+      "description": "Optional default for rooms.create(). Games may instead pass server at creation and omit this member."
     }
   },
   "$defs": {
@@ -337,6 +358,21 @@
           "modes": {
             "required": [
               "solo"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "room",
+          "modes"
+        ],
+        "properties": {
+          "modes": {
+            "required": [
+              "room"
             ]
           }
         }

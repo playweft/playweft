@@ -55,7 +55,7 @@ function find(tree, type) {
   return find(tree.props?.children, type);
 }
 const game = { manifestUrl: "https://game.example/demo/playweft.json", url: "https://game.example/demo/index.html",
-  manifestId: "https://game.example/demo/", name: "Demo", modes: ["solo", "room"] };
+  manifestId: "https://game.example/demo/", name: "Demo", launchMode: "choose", modes: ["solo", "room"] };
 function fixture(initial = "/", selectedGame = game, overrides = {}) {
   const origin = overrides.origin ?? "https://platform.example";
   const history = [`${origin}/`, new URL(initial, origin).href];
@@ -252,12 +252,12 @@ test("pasted share links preserve encoded Manifest query parameters and validate
 });
 
 
-test('auto and omitted launch_mode preserve capability-based entry for solo, room and dual games',async()=>{
+test('auto and omitted launch_mode open games directly without a mode picker',async()=>{
   for(const launchMode of [undefined,'auto'])for(const modes of [['solo'],['room'],['solo','room']]){
     const f=fixture('/?game=game.example/demo/',{...game,modes,launchMode});await f.settle();
-    assert.equal(Boolean(find(f.tree,'SoloHost')),modes.length===1&&modes[0]==='solo');
+    assert.equal(Boolean(find(f.tree,'SoloHost')),modes.includes('solo'));
     assert.equal(Boolean(find(f.tree,'RoomHost')),modes.length===1&&modes[0]==='room');
-    assert.equal(Boolean(find(f.home,'LaunchChoiceDialog')),modes.length===2);f.dispose();
+    assert.equal(Boolean(find(f.home,'LaunchChoiceDialog')),false);f.dispose();
   }
 });
 test('solo preference bypasses selection for cards and share links, replaces the shared entry and restores on refresh',async()=>{
@@ -285,4 +285,25 @@ test('mobile search shares input with the desktop form and submits room links th
   find(f.home, 'MobileSearch').props.onSubmit(); await f.settle();
   assert.equal(f.window.location.pathname, '/r/FZCC');
   assert.ok(find(f.tree, 'RoomHost')); f.dispose();
+});
+
+test('embedded room URL changes retain the same game host and replace the current history entry', async () => {
+  const embedded={...game,embeddedLobby:true,launchMode:'auto'};
+  const f=fixture('/?game=game.example/demo/',embedded);await f.settle();
+  const first=find(f.tree,'SoloHost');assert.ok(first);const entries=f.history.length;
+  first.props.onRoomChange('FZCC');await f.settle();
+  const joined=find(f.tree,'SoloHost');assert.ok(joined);assert.equal(joined.key,first.key);
+  assert.equal(find(f.tree,'RoomHost'),undefined);assert.equal(f.window.location.pathname,'/r/FZCC');assert.equal(f.history.length,entries);
+  joined.props.onRoomChange();await f.settle();assert.ok(find(f.tree,'SoloHost'));
+  assert.equal(f.window.location.pathname+f.window.location.search,'/?game=game.example/demo/&mode=solo');assert.equal(f.history.length,entries);
+  f.dispose();
+});
+
+test('room invitations for embedded games open the same persistent host used by direct game launches',async()=>{
+  const f=fixture('/r/FZCC');await f.settle();const room=find(f.tree,'RoomHost');assert.ok(room);
+  room.props.onGameDiscovered({...game,embeddedLobby:true});await f.settle();
+  const host=find(f.tree,'SoloHost');assert.ok(host);assert.equal(host.props.initialRoomId,'FZCC');
+  assert.equal(find(f.tree,'RoomHost'),undefined);assert.equal(f.window.location.pathname,'/r/FZCC');
+  host.props.onRoomChange();await f.settle();assert.ok(find(f.tree,'SoloHost'));
+  assert.equal(f.window.location.pathname+f.window.location.search,'/?game=game.example/demo/&mode=solo');f.dispose();
 });

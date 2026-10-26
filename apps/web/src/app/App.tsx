@@ -30,6 +30,8 @@ export default function App() {
   const [location, setLocation] = useState(readAppLocation);
   const [entryStatus, setEntryStatus] = useState<string>();
   const [soloGame, setSoloGame] = useState<RecentGame>();
+  const [embeddedEntryRoomId, setEmbeddedEntryRoomId] = useState<string>();
+  const [embeddedRoomId, setEmbeddedRoomId] = useState<string>();
   const [soloClosing, setSoloClosing] = useState(false);
   // The local guest nickname is available synchronously for the home UI. It
   // is not, by itself, permission to join a room: RoomHost waits for the
@@ -48,8 +50,8 @@ export default function App() {
   const externalGameMode = gameModeFromExternalLaunch(location);
   // soloGame caches a discovered Manifest; the URL decides which view is active.
   const activeSoloGame =
-    externalGameMode === "solo" && soloGame &&
-    location === gameLaunchPath(soloGame.manifestUrl, "solo")
+    soloGame && ((externalGameMode === "solo" &&
+    location === gameLaunchPath(soloGame.manifestUrl, "solo")) || (embeddedRoomId !== undefined && path === `/r/${embeddedRoomId}`))
       ? soloGame
       : undefined;
   const visibleSoloGame = soloClosing ? soloGame : activeSoloGame;
@@ -141,6 +143,12 @@ export default function App() {
     navigate(`/r/${roomId}`, true);
     setSoloGame(undefined);
   }, [navigate]);
+  const changeEmbeddedRoom = useCallback((roomId?: string) => {
+    setEmbeddedRoomId(roomId);
+    const game = soloGameRef.current;
+    if (roomId) navigate(`/r/${roomId}`, true);
+    else if (game) navigate(gameLaunchPath(game.manifestUrl, "solo"), true);
+  }, [navigate]);
   const openSoloGame = useCallback((game: RecentGame) => {
     void prepareGameOrientation(game.orientation);
     const nextPath = gameLaunchPath(game.manifestUrl, "solo");
@@ -149,6 +157,8 @@ export default function App() {
     }
     window.clearTimeout(soloExitTimer.current);
     setSoloClosing(false);
+    setEmbeddedEntryRoomId(undefined);
+    setEmbeddedRoomId(undefined);
     setSoloGame(game);
   }, [navigate]);
   const claimExternalGameUrl = useCallback((url: string) => {
@@ -196,7 +206,7 @@ export default function App() {
     !visibleSoloGame &&
     !overlayStatus;
 
-  if (roomId) {
+  if (roomId && !visibleSoloGame) {
     return (
       <RoomHost
         key={roomId}
@@ -204,7 +214,14 @@ export default function App() {
         nickname={nickname}
         roomId={roomId}
         onBack={() => navigate("/", true)}
-        onGameDiscovered={saveRecentGame}
+        onGameDiscovered={game => {
+          saveRecentGame(game);
+          if (game.embeddedLobby) {
+            setSoloGame(game);
+            setEmbeddedRoomId(roomId);
+            setEmbeddedEntryRoomId(roomId);
+          }
+        }}
         onNicknameChange={changeNickname}
       />
     );
@@ -238,6 +255,8 @@ export default function App() {
           game={visibleSoloGame}
           waitForIdentity={waitForIdentity}
           onEnterRoom={enterCreatedRoom}
+          onRoomChange={changeEmbeddedRoom}
+          initialRoomId={embeddedEntryRoomId}
           nickname={nickname}
           onBack={() => navigate("/", true)}
         />

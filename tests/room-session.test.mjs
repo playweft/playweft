@@ -5,6 +5,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import ts from "typescript";
+import { webcrypto } from 'node:crypto';
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const deferred = () => {
@@ -1262,4 +1263,139 @@ test('game bridge reports RTT to the authority, resets on route changes, and rep
   f.session.patch({selfId:'authority',peerTransport:'host',peerLatency:250});assert.deepEqual(readings().at(-1),{rttMs:0,transport:'local',status:'ready'});
   f.session.patch({peerTransport:'paused'});assert.deepEqual(readings().at(-1),{transport:'local',status:'unavailable'});
   hook.dispose();f.session.dispose();
+});
+
+test('runtime room configuration is host-only, persists separately from the game contract, and resets readiness', async () => {
+  const f=spectatorHostBackend();
+  assert.equal((await f.request('configuration','guest',{maxPlayers:4})).status,403);
+  assert.equal((await f.request('configuration','host',{maxPlayers:1})).status,400);
+  let response=await f.request('configuration','host',{minPlayers:3,maxPlayers:4,lobby:'platform'});
+  assert.equal(response.status,200);let value=await response.json();
+  assert.equal(value.minPlayers,3);assert.equal(value.maxPlayers,4);assert.equal(value.lobby,'platform');
+  assert.equal(f.stored.get('roomMeta').config.maxPlayers,2,'initialization contract stays stable for later joins');
+  assert.equal(f.stored.get('roomMeta').members.guest.ready,false);
+  const revision=value.revision;
+  response=await f.request('configuration','host',{minPlayers:3,maxPlayers:4,lobby:'platform'});
+  assert.equal((await response.json()).revision,revision,'no-op changes do not invalidate readiness');
+  for (const invalid of [{rules:{}},{maxPlayers:33},{minPlayers:0},{maxPlayers:2.5},{lobby:'other'}])
+    assert.equal((await f.request('configuration','host',invalid)).status,400);
+  assert.equal((await f.request('configuration','host',{minPlayers:1,maxPlayers:1})).status,409,'cannot remove an occupied seat');
+  const meta=f.stored.get('roomMeta');meta.phase='playing';f.stored.set('roomMeta',meta);
+  assert.equal((await f.request('configuration','host',{maxPlayers:4})).status,409);
+});
+
+test('room creation records initial player limits and lobby choice before initialization',async()=>{
+  const f=spectatorHostBackend();f.stored.clear();
+  const response=await f.room.fetch(new Request('https://room.example/create',{method:'POST',
+    headers:{'X-Playweft-Player-Id':'host','X-Playweft-Room-Id':'NEW','Content-Type':'application/json'},
+    body:JSON.stringify({manifestUrl:'https://game.example/playweft.json',configuration:{minPlayers:3,maxPlayers:3,lobby:'platform'}})}));
+  assert.equal(response.status,200);assert.deepEqual(f.stored.get('roomMeta').configuration,{minPlayers:3,maxPlayers:3,lobby:'platform'});
+});
+function embeddedManagerFixture(overrides={}) {
+  const loaded=loadedGame();loaded.game.version='1.0.0';loaded.manifest.room={server:{runtime:'lua',entry:'./game.lua',persistence:'durable'}};
+  const f=fixture({loadGameManifest:async()=>loaded,...overrides});
+  const manifestModule=f.moduleAt('apps/web/src/features/game/game-manifest.ts', {'@/app/i18n':{}, '@/app/app-load-policy':{}});
+  const {GameRoomManager}=f.moduleAt('apps/web/src/features/game/GameRoomManager.ts', {'./game-manifest': manifestModule});
+  const entered=[],created=[],removed=[];
+  f.api.createRoom=async(url,configuration,initialization)=>{created.push({url,configuration,initialization});return {roomId:'NEW',manifestUrl:url};};
+  f.api.dissolveRoom=async id=>{removed.push(id);return {dissolved:true};};
+  const manager=new GameRoomManager(loaded,{waitForIdentity:async()=> 'Player',nickname:()=> 'Player',message:key=>key,onRoomChange:id=>entered.push(id)},f.api);
+  return {...f,manager,loaded,entered,created,removed};
+}
+test('running game creates and owns a single room, can leave and recreate, and validates joins before membership changes',async()=>{
+  const f=embeddedManagerFixture();const first=f.manager.create({minPlayers:3,maxPlayers:4,lobby:'platform'});
+  assert.equal(first,f.manager.create());const result=await first;assert.equal(result.roomId,'NEW');
+  assert.equal(f.counts.join,1);assert.equal(f.created.length,1);assert.equal(f.created[0].configuration.lobby,'platform');
+  assert.equal((await f.manager.create()).roomId,'NEW');assert.equal(f.created.length,1);
+  await assert.rejects(f.manager.join('OTHER'),error=>error.data.code==='ROOM_ALREADY_JOINED');
+  await f.manager.session.leave();assert.equal(f.manager.session,undefined);assert.deepEqual(f.entered,['NEW',undefined]);
+  f.api.loadGameManifest=async()=>loadedGame('other');
+  await assert.rejects(f.manager.join('OTHER'),error=>error.data.code==='ROOM_GAME_MISMATCH');assert.equal(f.counts.join,1);
+  f.api.loadGameManifest=async()=>f.loaded;
+  await f.manager.create();assert.equal(f.created.length,2);assert.equal(f.counts.join,2);
+  f.manager.dispose();f.session.dispose();
+});
+test('closing a game while room creation is in flight cleans up the late room instead of entering it',async()=>{
+  const gate=deferred(),started=deferred(),f=embeddedManagerFixture();
+  f.api.createRoom=async()=>{started.resolve();return gate.promise;};
+  const pending=f.manager.create();await started.promise;f.manager.dispose();
+  gate.resolve({roomId:'LATE',manifestUrl:f.loaded.game.manifestUrl});
+  await assert.rejects(pending,error=>error.data.code==='BRIDGE_CLOSED');
+  assert.deepEqual(f.removed,['LATE']);assert.equal(f.counts.join,0);assert.deepEqual(f.entered,[]);f.session.dispose();
+});
+test('custom room lobby bridge persists across start and return and emits filtered room state',async()=>{
+  const loaded=loadedGame();loaded.manifest.room={server:{runtime:'lua',entry:'./game.lua',persistence:'durable'}};
+  const f=fixture({loadGameManifest:async()=>loaded});const socket=await f.join();const hook=bridgeHarness(f);hook.render();
+  const bridge=hook.attachments[0];assert.ok(bridge);bridge.connect();
+  const context=await bridge.options.handlers['game.initialize'].handle();assert.equal(context.phase,'lobby');
+  assert.equal(context.room.players[0].name,undefined);assert.equal(context.room.players[0].avatarUrl,undefined);
+  const revision=f.session.getState().gameRevision;
+  socket.message(presence(3,'playing'));hook.render();socket.message(presence(4));hook.render();
+  assert.equal(f.session.getState().gameRevision,revision);assert.equal(bridge.detached,0);assert.equal(hook.attachments.length,1);
+  assert.equal(bridge.messages.filter(message=>message.method==='room.stateChanged').length,2);
+  hook.dispose();f.session.dispose();
+});
+
+test('games with no Manifest server create with a runtime descriptor, and later joins use the saved contract',async()=>{
+  const f=embeddedManagerFixture();const {room:oldRoom}=f.loaded;delete f.loaded.room;delete f.loaded.manifest.room;
+  const initialization={...oldRoom,serverUrl:'https://game.example/chosen.lua',liveRoom:true};
+  f.api.getRoomLaunch=async()=>({manifestUrl:f.loaded.game.manifestUrl,initialization});
+  await f.manager.create({minPlayers:2,maxPlayers:4,server:{runtime:'lua',entry:'./chosen.lua',persistence:'live'}});
+  assert.equal(f.created[0].initialization.serverUrl,initialization.serverUrl);
+  assert.equal(f.created[0].initialization.liveRoom,true);assert.equal(f.created[0].configuration.server,undefined);
+  assert.equal(f.manager.session.getState().loadedGame.room.serverUrl,initialization.serverUrl);
+  await f.manager.session.leave();
+  await f.manager.join('EXISTING');assert.equal(f.created.length,1);assert.equal(f.counts.join,2);
+  f.manager.dispose();f.session.dispose();
+});
+test('missing or invalid creation servers cannot create a room or change an existing room server',async()=>{
+  const f=embeddedManagerFixture();delete f.loaded.room;
+  await assert.rejects(f.manager.create(),e=>e.data.code==='ROOM_SERVER_REQUIRED');assert.equal(f.created.length,0);
+  await assert.rejects(f.manager.create({server:{runtime:'lua',entry:'https://foreign.example/game.lua',persistence:'durable'}}));
+  assert.equal(f.created.length,0);f.manager.dispose();f.session.dispose();
+});
+function atomicRuntimeRoom() {
+  const b=browser(),stored=new Map();let fetches=0,compiles=0,disposals=0,script='function setup() return {} end';
+  Object.assign(b.globals,{setTimeout,clearTimeout,TextDecoder,crypto:webcrypto,
+    fetch:async()=>{fetches++;return new Response(script,{headers:{'Content-Type':'text/plain'}});}});
+  const {GameRoom}=b.moduleAt('apps/worker/src/room.ts',{
+    'cloudflare:workers':{DurableObject:class {constructor(ctx){this.ctx=ctx;}}},
+    './runtime-registry':{isRuntimeKind:value=>value==='lua',createRuntime:async(_runtime,source)=>{
+      compiles++;if(source==='invalid')throw Error('invalid Lua');return {dispose(){disposals++;}};
+    }},
+  });
+  const room=new GameRoom({getWebSockets:()=>[],storage:{
+    get:async key=>structuredClone(stored.get(key)),put:async(key,value)=>stored.set(key,structuredClone(value)),
+    delete:async key=>stored.delete(key),
+  }},{});
+  room.touch=async()=>{};room.scheduleAlarm=async()=>{};
+  const initialization={gameId:'https://game.example/demo/',gameVersion:'1.0.0',serverUrl:'https://game.example/demo/game.lua',runtime:'lua',minPlayers:1,maxPlayers:32,liveRoom:false};
+  const request=(path,body,method='POST')=>room.fetch(new Request('https://room.example/'+path,{method,
+    headers:{'X-Playweft-Player-Id':'host','X-Playweft-Room-Id':'NEW','Content-Type':'application/json'},
+    ...(body===undefined?{}:{body:JSON.stringify(body)})}));
+  return {room,stored,initialization,request,script:value=>{script=value;},counts:()=>({fetches,compiles,disposals})};
+}
+test('creation compiles and locks the runtime; joining and re-initializing never fetch a changed source',async()=>{
+  const f=atomicRuntimeRoom(),response=await f.request('create',{manifestUrl:'https://game.example/demo/playweft.json',
+    initialization:f.initialization,configuration:{minPlayers:2,maxPlayers:4,lobby:'platform'}});
+  assert.equal(response.status,200,await response.clone().text());
+  assert.equal(f.stored.get('roomMeta').config.script,'function setup() return {} end');
+  assert.equal(f.stored.get('roomMeta').config.scriptHash.length,64);
+  const launch=await (await f.request('launch',undefined,'GET')).json();
+  assert.deepEqual(launch.initialization,f.initialization);assert.equal(launch.initialization.script,undefined);
+  f.script('changed');assert.equal((await f.request('initialize',launch.initialization,'PUT')).status,200);
+  assert.equal((await f.request('join')).status,200);
+  assert.equal((await f.request('initialize',{...launch.initialization,serverUrl:'https://game.example/another.lua'},'PUT')).status,409);
+  assert.equal((await f.request('configuration',{server:{entry:'another.lua'}})).status,400);
+  assert.deepEqual(f.counts(),{fetches:1,compiles:1,disposals:1});
+});
+test('bad server URLs, failed source fetches and invalid Lua leave no room metadata',async()=>{
+  for(const kind of ['origin','script','empty']) {
+    const f=atomicRuntimeRoom();let initialization=f.initialization;
+    if(kind==='origin')initialization={...initialization,serverUrl:'https://foreign.example/script.lua'};
+    if(kind==='script')f.script('invalid');if(kind==='empty')f.script('');
+    const response=await f.request('create',{manifestUrl:'https://game.example/demo/playweft.json',initialization});
+    assert.equal(response.ok,false);assert.equal(f.stored.has('roomMeta'),false);
+    assert.equal((await f.request('launch',undefined,'GET')).status,404);
+  }
 });

@@ -21,6 +21,9 @@ export function useRoomControls(
   const lobby = state.presence;
   const selfId = state.selfId;
   const phase = lobby?.phase ?? "lobby";
+  const supportsGameLobby = !!state.loadedGame?.game.embeddedLobby || !!state.loadedGame?.manifest?.room || state.loadedGame?.manifest?.modes.room?.lobby === "game";
+  const [lobbyOverride, setLobbyOverride] = useState<"platform" | "game">();
+  const useGameLobby = supportsGameLobby && (lobbyOverride ?? lobby?.lobby ?? "game") === "game";
   const gameName = game ? localizeGameName(game, locale) : t("gameRoom");
   const gameDescription = game
     ? localizeGameDescription(game, locale)
@@ -74,6 +77,7 @@ export function useRoomControls(
   }, [game]);
   useEffect(() => {
     setGameHelpOpen(false);
+    setLobbyOverride(undefined);
   }, [game?.manifestUrl]);
   useEffect(() => {
     document.title = `${gameName} | Playweft`;
@@ -138,6 +142,10 @@ export function useRoomControls(
     lobby,
     selfId,
     phase,
+    supportsGameLobby,
+    useGameLobby,
+    showPlatformLobby: () => { setGameInfoOpen(false); setLobbyOverride("platform"); },
+    showGameLobby: () => setLobbyOverride("game"),
     isOwner,
     connectionMode: lobby?.connectionMode ?? "platform",
     peerTransport: state.peerTransport,

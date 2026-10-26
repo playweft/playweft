@@ -1,3 +1,6 @@
+import type { GameRoomManager } from "@/features/game/GameRoomManager";
+import type { LoadedGame } from "@/features/game/game-manifest";
+import { createRoomLobbyHandlers, roomCreateOptionsFromRpcParams, gameRoomState, ROOM_LOBBY_CAPABILITIES } from "./room-lobby-bridge";
 import { gameLatency } from "./game-latency";
 import { useEffect, useRef, type RefObject } from "react";
 import {
@@ -54,6 +57,9 @@ export function useRoomGameBridge({
   gameName,
   nickname,
   deferred,
+  enabled = true,
+  manager,
+  loadedGame,
 }: {
   session?: RoomSession;
   state: RoomSessionState;
@@ -61,12 +67,17 @@ export function useRoomGameBridge({
   gameName: string;
   nickname: string;
   deferred: boolean;
+  enabled?: boolean;
+  manager?: GameRoomManager;
+  loadedGame?: LoadedGame;
 }) {
   const { t } = useI18n();
-  const game = state.loadedGame?.game;
+  const game = (loadedGame ?? state.loadedGame)?.game;
   const gameUrl = game?.url;
   const origin = gameUrl ? new URL(gameUrl).origin : undefined;
   const phase = state.presence?.phase;
+  const customLobby = !!manager || !!state.loadedGame?.game.embeddedLobby || !!state.loadedGame?.manifest?.room || state.loadedGame?.manifest?.modes.room?.lobby === "game";
+  const active = enabled && (customLobby || phase === "playing");
   const clipboard = useClipboardRead(gameName, game?.manifestId, origin);
   const roomPlayerProfiles = useRoomPlayerProfileAccess(state.presence);
   const userProfile = useUserProfileAccess(
@@ -101,13 +112,19 @@ export function useRoomGameBridge({
   };
 
   useEffect(() => {
-    if (!session || !origin || phase !== "playing" || deferred) return;
+    if ((!session && !manager) || !origin || !active || deferred) return;
+    const currentSession = () => {
+      const current = manager ? manager.session : session;
+      if (!current) throw rpcPlatformFault("ROOM_CLOSED", "The game is not in a room");
+      return current;
+    };
+    const currentState = () => manager ? manager.getState() : session!.getState();
     let closed = false;
     let port: MessagePort | undefined;
     let initialSnapshotTimer: number | undefined;
-    let previous = session.getState();
+    let previous = currentState();
     const assertBridgeOpen = () => {
-      if (closed || session.getState().lifecycle === "ended")
+      if (closed || (!manager && currentState().lifecycle === "ended"))
         throw rpcPlatformFault(
           "BRIDGE_CLOSED",
           "The game bridge was closed",
@@ -134,10 +151,11 @@ export function useRoomGameBridge({
       frame,
       origin,
       canConnect: () =>
-        !closed && session.getState().presence?.phase === "playing",
+        !closed && (!!manager || (currentState().lifecycle === "joined" &&
+        (customLobby || currentState().presence?.phase === "playing"))),
       onBeforeConnect() {
         cancelPermissions();
-        session.cancelActions(
+        (manager?.session ?? session)?.cancelActions(
           "BRIDGE_REPLACED",
           "The game bridge was replaced",
         );
@@ -146,16 +164,36 @@ export function useRoomGameBridge({
         port = next;
         if (port)
           postRpcNotification(port, "platform.latency", {
-            ...gameLatency(session.getState()),
+            ...gameLatency(currentState()),
           });
       },
       handlers: {
         ...createLocalStorageHandlers(origin),
+        ...(customLobby ? Object.fromEntries(ROOM_LOBBY_CAPABILITIES.map(method => [method, {
+          handle(params: JsonValue | undefined) {
+            return createRoomLobbyHandlers(currentSession(), assertBridgeOpen)[method]!.handle(params);
+          },
+        }])) : {}),
+        ...(customLobby ? {
+          "rooms.create": { handle(params: JsonValue | undefined) {
+            assertBridgeOpen();
+            const configuration = roomCreateOptionsFromRpcParams(params);
+            return manager ? manager.create(configuration) : gameRoomState(currentSession());
+          } },
+          "rooms.join": { handle(params: JsonValue | undefined) {
+            assertBridgeOpen();
+            if (!params || typeof params !== "object" || Array.isArray(params) || Object.keys(params).length !== 1 || typeof params.roomId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(params.roomId))
+              throw new RpcFault(JsonRpcErrorCode.InvalidParams, "Expected { roomId }");
+            if (manager) return manager.join(params.roomId);
+            if (params.roomId !== currentSession().roomId) throw rpcPlatformFault("ROOM_ALREADY_JOINED", "Leave the current room first");
+            return gameRoomState(currentSession());
+          } },
+        } : {}),
         "game.initialize": {
           async handle() {
             assertBridgeOpen();
-            const state = session.getState();
-            if (state.lifecycle !== "joined" || !state.selfId) {
+            const state = currentState();
+            if (!manager && (state.lifecycle !== "joined" || !state.selfId)) {
               throw rpcPlatformFault(
                 "INITIALIZATION_REJECTED",
                 "The room is not ready",
@@ -165,17 +203,18 @@ export function useRoomGameBridge({
             if (snapshot) {
               window.clearTimeout(initialSnapshotTimer);
               initialSnapshotTimer = window.setTimeout(() => {
-                if (!closed && session.getState().snapshot === snapshot)
+                if (!closed && currentState().snapshot === snapshot)
                   sendSnapshot(snapshot);
               }, 0);
             }
             const name = latest.current.nickname;
             return {
-              mode: "room",
+              mode: state.lifecycle === "joined" ? "room" : "solo",
               protocolVersion: PLAYWEFT_BRIDGE_VERSION,
-              capabilities,
-              playerId: state.selfId,
-              player: { id: state.selfId, ...(name ? { name } : {}) },
+              capabilities: customLobby ? [...capabilities, ...ROOM_LOBBY_CAPABILITIES, ...((manager || (loadedGame ?? state.loadedGame)?.room) ? ["rooms.create", "rooms.join"] : [])] : capabilities,
+              ...(customLobby ? { phase: state.presence?.phase ?? "solo", room: state.lifecycle === "joined" ? gameRoomState(currentSession()) : null } : {}),
+              ...(state.selfId ? { playerId: state.selfId } : {}),
+              player: { ...(state.selfId ? { id: state.selfId } : {}), ...(name ? { name } : {}) },
             };
           },
         },
@@ -187,7 +226,7 @@ export function useRoomGameBridge({
                 JsonRpcErrorCode.InvalidRequest,
                 "room.action requires a JSON-RPC id",
               );
-            return session.action(requestId, actionFromRpcParams(params));
+            return currentSession().action(requestId, actionFromRpcParams(params));
           },
         },
         "navigator.clipboard.readText": {
@@ -208,14 +247,14 @@ export function useRoomGameBridge({
             }
             if (
               request.fields.includes("avatar") &&
-              request.playerId === session.getState().selfId
+              request.playerId === currentState().selfId
             ) {
               const ownProfile =
                 await latest.current.userProfile.requestProfile(request.fields);
               assertBridgeOpen();
               let nextPresence: RoomPresence;
               try {
-                nextPresence = await session.shareAvatar(
+                nextPresence = await currentSession().shareAvatar(
                   ownProfile.avatar !== undefined,
                 );
               } catch (reason) {
@@ -251,7 +290,7 @@ export function useRoomGameBridge({
             assertBridgeOpen();
             if (fields.includes("avatar")) {
               try {
-                await session.shareAvatar(profile.avatar !== undefined);
+                await currentSession().shareAvatar(profile.avatar !== undefined);
               } catch (reason) {
                 throw rpcPlatformFault(
                   "PROFILE_SHARE_FAILED",
@@ -292,21 +331,26 @@ export function useRoomGameBridge({
       closed = true;
       window.clearTimeout(initialSnapshotTimer);
       cancelPermissions();
-      session.cancelActions();
+      (manager?.session ?? session)?.cancelActions();
+      manager?.cancelPending();
       detachBridge();
     };
-    const unsubscribe = session.subscribe(() => {
+    const unsubscribe = (manager ?? session!).subscribe(() => {
       if (closed) return;
-      const next = session.getState();
+      const next = currentState();
+      if (next.lifecycle === "ended" && customLobby) postRpcNotification(port, "room.closed", { reason: "room-ended" });
       if (
-        next.lifecycle === "ended" ||
-        next.presence?.phase !== "playing" ||
-        next.loadedGame !== previous.loadedGame ||
-        next.gameRevision !== previous.gameRevision
+        (!manager && next.lifecycle === "ended") ||
+        (!customLobby && next.presence?.phase !== "playing") ||
+        (!manager && next.loadedGame !== previous.loadedGame) ||
+        (!manager && next.gameRevision !== previous.gameRevision)
       ) {
         closeBridge();
         return;
       }
+      if (customLobby && next.lifecycle === "joined" && next.presence && (next.presence !== previous.presence || next.selfId !== previous.selfId))
+        postRpcNotification(port, "room.stateChanged", gameRoomState(currentSession()));
+      if (customLobby && next.presence?.phase !== previous.presence?.phase) cancelPermissions();
       if (next.snapshot && next.snapshot !== previous.snapshot)
         sendSnapshot(next.snapshot);
       const latency = gameLatency(next);
@@ -315,7 +359,7 @@ export function useRoomGameBridge({
       publishProfileChanges(port, previous.presence, next.presence);
       previous = next;
     });
-    const unsubscribeErrors = session.subscribeErrors((error) => {
+    const unsubscribeErrors = (manager ?? session!).subscribeErrors((error) => {
       if (!closed)
         postRpcNotification(port, "platform.error", {
           error: { ...error, retryable: false },
@@ -323,10 +367,10 @@ export function useRoomGameBridge({
     });
     return () => {
       unsubscribe();
-      unsubscribeErrors();
+      unsubscribeErrors?.();
       closeBridge();
     };
-  }, [session, frame, origin, phase, state.gameRevision, deferred]);
+  }, [session, frame, origin, active, customLobby, state.gameRevision, deferred, manager, loadedGame]);
 
   return { clipboard, userProfile, languageModel, windowDialogs };
 }

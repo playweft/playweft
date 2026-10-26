@@ -82,9 +82,11 @@ export type GameManifestOrientation =
   | "landscape-secondary";
 
 export type GameMode = "solo" | "room";
-export type GameLaunchMode = "auto" | "solo";
+export type GameLaunchMode = "auto" | "solo" | "choose";
 
 export interface GameManifestRoomMode {
+  /** Who renders the pre-match lobby. Omission uses the platform lobby. */
+  lobby?: "platform" | "game";
   players: {
     min: number;
     max: number;
@@ -118,13 +120,17 @@ export interface GameManifest {
   theme_color?: string;
   orientation?: GameManifestOrientation;
   help_url?: string;
-  /** Omitted or auto preserves single-mode entry / dual-mode choice. */
+  /** Omitted or auto opens the game directly; choose explicitly asks for a mode. */
   launch_mode?: GameLaunchMode;
-  modes: {
+  /** Preferred declaration for games that manage their own lobby. */
+  room?: { server: GameManifestRoomMode["server"] };
+  modes?: {
     solo?: Record<string, never>;
     room?: GameManifestRoomMode;
   };
 }
+
+export type ParsedGameManifest = GameManifest & { modes: NonNullable<GameManifest["modes"]> };
 
 export class GameManifestValidationError extends Error {
   constructor(message: string) {
@@ -133,7 +139,7 @@ export class GameManifestValidationError extends Error {
   }
 }
 
-export function parseGameManifest(value: unknown): GameManifest {
+export function parseGameManifest(value: unknown): ParsedGameManifest {
   if (!isRecord(value)) failManifest("manifest must be an object");
   const manifest = value as Record<string, unknown>;
   if (manifest.manifest_version !== GAME_MANIFEST_VERSION) {
@@ -166,9 +172,17 @@ export function parseGameManifest(value: unknown): GameManifest {
   }
 
   const metadata = parseManifestMetadata(manifest);
-  const modes = parseManifestModes(manifest.modes);
-  if (manifest.launch_mode !== undefined && manifest.launch_mode !== "auto" && manifest.launch_mode !== "solo")
-    failManifest("launch_mode must be auto or solo");
+  const modes = manifest.modes === undefined ? { solo: {} } : parseManifestModes(manifest.modes);
+  let room: GameManifest["room"];
+  if (manifest.room !== undefined) {
+    if (!isRecord(manifest.room)) failManifest("room must be an object");
+    assertManifestKeys(manifest.room, ["server"], "room");
+    if (modes.room) failManifest("Use room or modes.room, not both");
+    const normalized = parseManifestModes({ room: { players: { min: 1, max: 32 }, server: manifest.room.server } });
+    room = { server: normalized.room!.server };
+  }
+  if (manifest.launch_mode !== undefined && manifest.launch_mode !== "auto" && manifest.launch_mode !== "solo" && manifest.launch_mode !== "choose")
+    failManifest("launch_mode must be auto, solo or choose");
   if (manifest.launch_mode === "solo" && !modes.solo)
     failManifest("launch_mode solo requires modes.solo");
   if (manifest.$schema !== undefined && typeof manifest.$schema !== "string") {
@@ -189,6 +203,7 @@ export function parseGameManifest(value: unknown): GameManifest {
     ...metadata,
     ...(manifest.launch_mode !== undefined ? { launch_mode: manifest.launch_mode as GameLaunchMode } : {}),
     modes,
+    ...(room ? { room } : {}),
   };
 }
 
@@ -371,7 +386,18 @@ function parseManifestIcons(value: unknown): GameManifestIcon[] | undefined {
   });
 }
 
-function parseManifestModes(value: unknown): GameManifest["modes"] {
+/** Shared server descriptor for a Manifest default or rooms.create(). */
+export type RoomServer = GameManifestRoomMode["server"];
+export function parseRoomServer(value: unknown): RoomServer {
+  if (!isRecord(value)) failManifest("server must be an object");
+  assertManifestKeys(value, ["runtime", "entry", "persistence"], "server");
+  if (value.runtime !== "lua" || !isRelativeOrWebUrl(value.entry, 2_048) ||
+      (value.persistence !== "durable" && value.persistence !== "live"))
+    failManifest("server requires a Lua entry and durable or live persistence");
+  return { runtime: "lua", entry: value.entry as string, persistence: value.persistence as "durable" | "live" };
+}
+
+function parseManifestModes(value: unknown): ParsedGameManifest["modes"] {
   if (!isRecord(value)) failManifest("modes must be an object");
   const modes = value as Record<string, unknown>;
   assertManifestKeys(modes, ["solo", "room"], "modes");
@@ -388,7 +414,9 @@ function parseManifestModes(value: unknown): GameManifest["modes"] {
   if (hasRoom) {
     if (!isRecord(modes.room)) failManifest("modes.room must be an object");
     const input = modes.room as Record<string, unknown>;
-    assertManifestKeys(input, ["players", "server"], "modes.room");
+    assertManifestKeys(input, ["players", "server", "lobby"], "modes.room");
+    if (input.lobby !== undefined && input.lobby !== "platform" && input.lobby !== "game")
+      failManifest("modes.room.lobby must be platform or game");
     if (!isRecord(input.players)) {
       failManifest("modes.room.players must be an object");
     }
@@ -401,34 +429,14 @@ function parseManifestModes(value: unknown): GameManifest["modes"] {
     ) {
       failManifest("room player limits must be ordered integers from 1 to 32");
     }
-    if (!isRecord(input.server)) {
-      failManifest("modes.room.server must be an object");
-    }
-    const server = input.server as Record<string, unknown>;
-    assertManifestKeys(
-      server,
-      ["runtime", "entry", "persistence"],
-      "modes.room.server",
-    );
-    if (
-      server.runtime !== "lua" ||
-      !isRelativeOrWebUrl(server.entry, 2_048) ||
-      (server.persistence !== "durable" && server.persistence !== "live")
-    ) {
-      failManifest(
-        "modes.room.server requires a Lua entry and durable or live persistence",
-      );
-    }
+    const server = parseRoomServer(input.server);
     room = {
+      ...(input.lobby !== undefined ? { lobby: input.lobby as "platform" | "game" } : {}),
       players: {
         min: players.min as number,
         max: players.max as number,
       },
-      server: {
-        runtime: "lua",
-        entry: server.entry as string,
-        persistence: server.persistence as "durable" | "live",
-      },
+      server,
     };
   }
   return {
@@ -632,6 +640,7 @@ export interface RoomPresence {
   spectators: RoomSpectator[];
   /** Room manager's member ID; may belong to players or spectators. */
   ownerId: string;
+  lobby?: "platform" | "game";
   minPlayers: number;
   maxPlayers: number;
   /** Experimental transport selection, changed only in the lobby. */
@@ -723,3 +732,19 @@ export interface RoomError {
   type: "error";
   error: string;
 }
+
+/** Public room metadata for an opt-in game-rendered lobby; profiles stay permission-scoped. */
+export type GameRoomState = {
+  roomId: string;
+  revision: number;
+  phase: "lobby" | "playing";
+  ownerId: string;
+  selfId: string;
+  players: { id: string; seat: number; ready: boolean }[];
+  spectators: { id: string }[];
+  minPlayers: number;
+  maxPlayers: number;
+  inviteUrl: string;
+  lobby: "platform" | "game";
+  permissions: { setConfiguration: boolean; setReady: boolean; setSeat: boolean; start: boolean; leave: boolean };
+};

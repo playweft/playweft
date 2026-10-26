@@ -276,7 +276,7 @@ test("SDK close rejects both active and queued requests and unavailable IDB neve
 
 test("both platform hosts advertise the storage methods", async () => {
   for (const path of [
-    "../apps/web/src/features/game/SoloHost.tsx",
+    "../apps/web/src/features/game/LegacySoloHost.tsx",
     "../apps/web/src/features/room/useRoomGameBridge.ts",
   ]) {
     const source = await readFile(new URL(path, import.meta.url), "utf8");

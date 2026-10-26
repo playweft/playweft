@@ -58,6 +58,7 @@ export type RoomServices = Pick<
   | "dissolveRoom"
   | "setRoomSeat"
   | "setPlayerReady"
+  | "setRoomConfiguration"
   | "kickPlayer"
   | "transferRoomHost"
   | "returnRoomToLobby"
@@ -173,7 +174,7 @@ export class RoomSession {
       this.syncedNickname = nickname;
       const launch = await this.api.getRoomLaunch(this.roomId);
       if (!this.isCurrent(generation)) return;
-      await this.loadGame(launch.manifestUrl);
+      await this.loadGame(launch.manifestUrl, launch.initialization);
     } catch (reason) {
       if (this.isCurrent(generation)) this.failEntry(reason);
     }
@@ -260,13 +261,16 @@ export class RoomSession {
   chooseSeat(seat: number | null): Promise<boolean> {
     return this.updatePresence(() => this.api.setRoomSeat(this.roomId, seat));
   }
-  setReady(): Promise<boolean> {
+  setConfiguration(configuration: Partial<PlatformApi.RoomConfiguration>): Promise<boolean> {
+    return this.updatePresence(() => this.api.setRoomConfiguration(this.roomId, configuration));
+  }
+  setReady(ready?: boolean): Promise<boolean> {
     const player = this.state.presence?.players.find(
       (player) => player.id === this.state.selfId,
     );
     return player
       ? this.updatePresence(() =>
-          this.api.setPlayerReady(this.roomId, !player.ready),
+          this.api.setPlayerReady(this.roomId, ready ?? !player.ready),
         )
       : Promise.resolve(false);
   }
@@ -506,7 +510,7 @@ export class RoomSession {
     }
   }
 
-  private async loadGame(manifestUrl: string): Promise<void> {
+  private async loadGame(manifestUrl: string, initialization?: PlatformApi.RoomInitialization): Promise<void> {
     const generation = ++this.generation;
     this.cancelActions("GAME_CHANGED", "The room game was changed");
     this.disposeLocalRoom();
@@ -522,7 +526,12 @@ export class RoomSession {
       gameRevision: this.state.gameRevision + 1,
     });
     try {
-      const loadedGame = await this.api.loadGameManifest(manifestUrl);
+      const discovered = await this.api.loadGameManifest(manifestUrl);
+      const loadedGame = initialization ? {
+        ...discovered,
+        game: { ...discovered.game, embeddedLobby: true },
+        room: { ...initialization, liveRoom: initialization.liveRoom === true },
+      } : discovered;
       if (!this.isCurrent(generation)) return;
       if (!loadedGame.room)
         throw new Error("The game Manifest does not declare room mode");
@@ -562,13 +571,16 @@ export class RoomSession {
     if (presence.revision >= (this.state.presence?.revision ?? -1)) {
       const returnedToLobby =
         presence.phase === "lobby" && this.state.presence?.phase === "playing";
-      if (returnedToLobby) this.roundGeneration += 1;
+      if (returnedToLobby) {
+        this.roundGeneration += 1;
+        this.cancelActions("BRIDGE_CLOSED", "The match ended");
+      }
       this.patch({
         presence,
         ...(presence.phase === "lobby"
           ? {
               snapshot: undefined,
-              gameRevision: this.state.gameRevision + (returnedToLobby ? 1 : 0),
+              gameRevision: this.state.gameRevision + (returnedToLobby && !this.state.loadedGame?.game.embeddedLobby && !this.state.loadedGame?.manifest?.room && this.state.loadedGame?.manifest?.modes.room?.lobby !== "game" ? 1 : 0),
             }
           : {}),
       });

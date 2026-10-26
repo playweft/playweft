@@ -4,8 +4,8 @@ Playweft treats a game as a static, versioned package described by one
 Manifest. The platform fetches and validates that Manifest before it executes
 the game client in a sandboxed iframe.
 
-The platform owns rooms, identity, the lobby, permissions, networking and
-authoritative Lua execution. The game client renders player-specific state and
+The platform owns room membership, identity, permissions, networking and
+authoritative Lua execution. Games may render their own lobby or use the platform lobby. The game client renders player-specific state and
 sends intents over a transferred `MessagePort`.
 
 ## 1. Publish a game package
@@ -76,21 +76,7 @@ Schema is
   "background_color": "#ffffff",
   "theme_color": "#70b967",
   "orientation": "any",
-  "help_url": "./help.html",
-  "modes": {
-    "solo": {},
-    "room": {
-      "players": {
-        "min": 2,
-        "max": 4
-      },
-      "server": {
-        "runtime": "lua",
-        "entry": "./game.lua",
-        "persistence": "durable"
-      }
-    }
-  }
+  "help_url": "./help.html"
 }
 ```
 
@@ -115,13 +101,17 @@ Key rules:
   orientation locking to installed or fullscreen contexts. For a concrete
   orientation, Playweft first attempts the lock directly, then enters fullscreen
   and retries only when the browser indicates fullscreen is required.
-- Presence of `modes.solo` or `modes.room` determines where the game may run.
-- Optional `launch_mode` is `"auto"` or `"solo"`. `"auto"` and omission are
-  equivalent: a single supported mode launches directly; dual-mode games show
-  the mode picker. `"solo"` requires `modes.solo` and launches solo directly,
-  while keeping room play available. There is no room-first preference.
-  Explicit mode links override this preference; room invites always join their
-  specified room. This is a Playweft extension, not a standard PWA member.
+- `modes` and `launch_mode` may be omitted: the game opens directly. An optional
+  top-level `room.server` may provide a compatibility default, but games can
+  instead pass `server` to `rooms.create()` when room play is requested. Neither
+  room capability nor player limits or game rules need to be declared up front.
+- `launch_mode: "choose"` explicitly shows the mode picker for games supporting
+  both solo and room play. Omitted/`"auto"` starts directly; `"solo"` remains a
+  compatibility alias. Explicit mode links override this preference, and room
+  invites always join their specified room.
+- Existing `modes.solo` / `modes.room` declarations remain supported, including
+  room-only games using the platform lobby. Do not declare both `room` and
+  `modes.room`. Legacy `modes.room.lobby: "game"` also opts into an in-game lobby.
 - `persistence: "durable"` persists authoritative state after each accepted
   action and permits Durable Object hibernation. `"live"` keeps active state in
   memory and routes actions over the room WebSocket. Live room activity timestamps
@@ -217,10 +207,104 @@ the platform has already loaded the package contract. Its result is:
 }
 ```
 
-Room iframes are mounted only after the platform locks the roster. Do not
-enable gameplay until the first `game.state` notification arrives.
+Legacy platform-lobby games mount their iframe when the match starts. Games
+using the Rooms API keep their iframe mounted through solo play, lobby, match
+and leaving a room. Do not enable network gameplay until the first `game.state`
+notification arrives.
 
-### Create a room from solo play
+### Rooms API
+
+Copy `/sdk/room.js` and optionally `room.d.ts` into the game package. After
+`game.initialize`, bind the client to the shared port:
+
+```js
+import { createRoomsClient } from "./room.js";
+const playweft = { rooms: createRoomsClient(gamePort, context.room) };
+
+const room = await playweft.rooms.create({
+  minPlayers: 3,
+  maxPlayers: 4,
+  lobby: "platform",
+  server: {
+    runtime: "lua",
+    entry: "./game-online.lua",
+    persistence: "durable",
+  },
+});
+room.addEventListener("statechange", () => renderRoom(room.state));
+room.addEventListener("close", () => showLocalMenu());
+renderRoom(room.state);
+
+await room.setConfiguration({ minPlayers: 4, maxPlayers: 4 });
+const configuration = room.getConfiguration();
+await room.setSeat(null); // spectate; a host can remain the host while spectating
+await room.start();
+await room.leave();
+// On bridge replacement, call playweft.rooms.destroy() before binding a new client.
+```
+
+A running game instance has at most one room. Concurrent creates share one
+operation. Creating while already joined returns the existing `Room` without
+changing its configuration. `playweft.rooms.current` is the current handle or
+`null`. `await playweft.rooms.join(roomId)` joins a room belonging to the same
+game and version; joining another room while joined fails with
+`ROOM_ALREADY_JOINED`. Leave first. A closed handle cannot control a later room.
+This limit is per running iframe, not a global limit across players or tabs.
+
+Creation returns after the room is configured and the player has joined.
+Player limits are integers from 1 to 32, with `minPlayers <= maxPlayers`.
+Omitted limits use 1 and 32 when a server is supplied at creation. `lobby` is `"game"` by
+default; `"platform"` opens the unified platform lobby for all members. The
+existing iframe stays mounted behind it and becomes visible when play starts.
+Games with their own lobby can open the platform fallback from the game menu.
+The URL is replaced with `/r/:roomId`; leaving restores the solo URL without
+reloading the game. Refreshing a room URL rejoins that room.
+
+The creation-only `server` descriptor is `{ runtime: "lua", entry, persistence }`,
+where persistence is `"durable"` or `"live"`. Its entry resolves against the
+Manifest URL, even if `start_url` points to another directory, and must share
+its origin without credentials. The backend fetches, validates and compiles the
+Lua script **before** creation succeeds, then saves the source and its hash.
+Invalid servers leave no room metadata. Creation does not run game setup yet.
+Joining, refreshing, and WebRTC hosting use that saved runtime contract; no
+participant supplies a server again, and a changed file at the original URL
+does not replace the saved source. `setConfiguration()` cannot change `server`.
+
+If `server` is omitted, the platform uses the Manifest default when one exists;
+otherwise creation rejects with `ROOM_SERVER_REQUIRED`. Plain solo manifests
+also receive the `rooms.create` and `rooms.join` capabilities. No unused Lua
+runtime or script is loaded just by opening such a game.
+
+`Room` extends `EventTarget` and exposes:
+
+| Member | Behavior |
+| --- | --- |
+| `id`, `closed` | Room identifier and terminal handle state |
+| `state` | Immutable latest confirmed public room state |
+| `getConfiguration()` | Synchronous copy of confirmed `{ minPlayers, maxPlayers, lobby }` |
+| `setConfiguration(partial)` | Host-only, lobby-only update; cannot remove occupied seats; actual changes reset readiness |
+| `setReady(boolean)` | Set this seated non-host player's readiness |
+| `setSeat(number | null)` | Choose a seat or spectate, while in the lobby |
+| `start()` | Host starts when the minimum number of seated players and readiness requirements are met |
+| `leave()` | Leave membership; the game remains open |
+| `statechange`, `close` | Events for confirmed state changes and terminal membership |
+
+`state` contains `roomId`, `revision`, `phase`, `ownerId`, `selfId`, `players`
+(`id`, `seat`, `ready`), `spectators` (`id`), `minPlayers`, `maxPlayers`, `lobby`,
+`inviteUrl` and `permissions`. Names and avatars still use the profile APIs and
+are not implicitly shared with the game. Game-specific rules stay in game code
+and its action protocol; they are not platform room configuration.
+
+The wire methods are `rooms.create(options)`, `rooms.join({ roomId })`,
+`room.getState`, `room.setConfiguration(partial)`, `room.setReady({ ready })`,
+`room.setSeat({ seat })`, `room.start`, `room.leave`. Notifications are
+`room.stateChanged(state)` and `room.closed({ reason })`. These mutations require
+JSON-RPC request IDs. Initialize returns `room: null` before joining or the
+current public state after joining; its `mode` describes the state at that time.
+Observe `room.state.phase` for subsequent lobby/match transitions. Existing
+`room.action`, `game.state`, latency and profile APIs continue to work.
+
+### Legacy room creation from solo play
 
 A solo game that also declares `modes.room` receives the `room.create`
 capability in `game.initialize`. Show a multiplayer button only when that

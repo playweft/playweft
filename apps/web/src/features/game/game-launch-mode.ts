@@ -11,5 +11,5 @@ export function gameLaunchMode(
   }
   if (game.launchMode === "solo" && game.modes.includes("solo")) return "solo";
   if (game.modes.length === 1) return game.modes[0]!;
-  return "choose";
+  return game.launchMode === "choose" ? "choose" : "solo";
 }

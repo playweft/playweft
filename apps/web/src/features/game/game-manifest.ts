@@ -2,7 +2,9 @@ import {
   GAME_MANIFEST_VERSION,
   PLAYWEFT_BRIDGE_VERSION,
   parseGameManifest,
-  type GameManifest,
+  parseRoomServer,
+  type RoomServer,
+  type ParsedGameManifest,
   type GameMode,
   type GameLaunchMode,
   type GameManifestIcon,
@@ -31,11 +33,12 @@ export interface DiscoveredGame {
   modes: GameMode[];
   launchMode?: GameLaunchMode;
   liveRoom?: boolean;
+  embeddedLobby?: boolean;
 }
 
 export interface LoadedGame {
   game: DiscoveredGame;
-  manifest: GameManifest;
+  manifest: ParsedGameManifest;
   room?: {
     gameId: string;
     gameVersion: string;
@@ -124,7 +127,7 @@ function loadedGameFromText(text: string, manifestUrl: string): LoadedGame {
     );
   }
   const game = discoveredGame(manifest, manifestUrl);
-  const roomMode = manifest.modes.room;
+  const roomMode = manifest.room ?? manifest.modes.room;
   if (!roomMode) return { game, manifest };
 
   const serverUrl = sameOriginUrl(
@@ -134,7 +137,7 @@ function loadedGameFromText(text: string, manifestUrl: string): LoadedGame {
   );
   if (!serverUrl) {
     throw new Error(
-      "modes.room.server.entry must resolve to the Manifest origin",
+      "room server.entry must resolve to the Manifest origin",
     );
   }
   return {
@@ -145,10 +148,21 @@ function loadedGameFromText(text: string, manifestUrl: string): LoadedGame {
       gameVersion: manifest.version,
       runtime: roomMode.server.runtime,
       serverUrl,
-      minPlayers: roomMode.players.min,
-      maxPlayers: roomMode.players.max,
+      minPlayers: manifest.modes.room?.players.min ?? 1,
+      maxPlayers: manifest.modes.room?.players.max ?? 32,
       liveRoom: roomMode.server.persistence === "live",
     },
+  };
+}
+
+/** Server entries are always relative to the Manifest, never the iframe URL. */
+export function roomInitializationForServer(game: DiscoveredGame, value: RoomServer): NonNullable<LoadedGame["room"]> {
+  const server = parseRoomServer(value);
+  const serverUrl = sameOriginUrl(server.entry, game.manifestUrl, new URL(game.manifestUrl).origin);
+  if (!serverUrl) throw new Error("server.entry must resolve to the Manifest origin");
+  return {
+    gameId: game.manifestId, gameVersion: game.version, runtime: server.runtime, serverUrl,
+    minPlayers: 1, maxPlayers: 32, liveRoom: server.persistence === "live",
   };
 }
 
@@ -176,17 +190,18 @@ export function isStoredDiscoveredGame(
     (value.themeColor === undefined || isCssColor(value.themeColor)) &&
     (value.orientation === undefined ||
       isStoredOrientation(value.orientation)) &&
+    (value.embeddedLobby === undefined || typeof value.embeddedLobby === "boolean") &&
     (value.liveRoom === undefined || typeof value.liveRoom === "boolean") &&
     Array.isArray(value.modes) &&
     value.modes.length > 0 &&
     value.modes.every((mode) => mode === "solo" || mode === "room") &&
-    (value.launchMode === undefined || value.launchMode === "auto" ||
+    (value.launchMode === undefined || value.launchMode === "auto" || value.launchMode === "choose" ||
       (value.launchMode === "solo" && value.modes.includes("solo")))
   );
 }
 
 function discoveredGame(
-  manifest: GameManifest,
+  manifest: ParsedGameManifest,
   manifestUrl: string,
 ): DiscoveredGame {
   const manifestOrigin = new URL(manifestUrl).origin;
@@ -234,7 +249,7 @@ function discoveredGame(
   assertCssColor(manifest.theme_color, "theme_color");
   const modes: GameMode[] = [
     ...(manifest.modes.solo ? (["solo"] as const) : []),
-    ...(manifest.modes.room ? (["room"] as const) : []),
+    ...(manifest.room || manifest.modes.room ? (["room"] as const) : []),
   ];
   return {
     url: clientUrl,
@@ -253,8 +268,9 @@ function discoveredGame(
     ...(manifest.theme_color ? { themeColor: manifest.theme_color } : {}),
     ...(manifest.orientation ? { orientation: manifest.orientation } : {}),
     modes,
+    ...(manifest.room || !manifest.modes.room ? { embeddedLobby: true } : {}),
     ...(manifest.launch_mode !== undefined ? { launchMode: manifest.launch_mode } : {}),
-    ...(manifest.modes.room?.server.persistence === "live"
+    ...((manifest.room ?? manifest.modes.room)?.server.persistence === "live"
       ? { liveRoom: true }
       : {}),
   };

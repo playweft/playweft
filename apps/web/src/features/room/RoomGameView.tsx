@@ -21,13 +21,15 @@ export default function RoomGameView({
   gameRevision,
 }: RoomGameViewProps) {
   const { gameInfoOpen, setGameInfoOpen, phase, gameUrl, gameName } = controls;
+  const active = phase === "playing" || controls.useGameLobby;
   return (
     <>
+      <div style={{ display: active ? "contents" : "none" }}>
       <GameViewport
         infoExpanded={gameInfoOpen}
         onOpenInfo={() => setGameInfoOpen(true)}
         orientationAction={gameViewport.orientationAction}
-        showOptions={phase === "playing" && !gameViewport.deferGameLoad}
+        showOptions={active && !gameViewport.deferGameLoad}
         onEnterPreferredOrientation={() =>
           void gameViewport.enterPreferredOrientation()
         }
@@ -40,7 +42,7 @@ export default function RoomGameView({
           gameViewport.landscapeCompatibilityRotation
         }
       >
-        {phase === "playing" && gameUrl && !gameViewport.deferGameLoad && (
+        {(active || controls.supportsGameLobby) && gameUrl && !gameViewport.deferGameLoad && (
           <GameFrame
             key={gameRevision}
             ref={iframe}
@@ -49,6 +51,7 @@ export default function RoomGameView({
           />
         )}
       </GameViewport>
+      </div>
     </>
   );
 }
@@ -81,13 +84,16 @@ export function RoomGamePanels({
       {gameInfoOpen && gameUrl && game && (
         <GameInfoPanel
           description={gameDescription}
+          onShowPlatformLobby={phase === "lobby" && controls.useGameLobby ? controls.showPlatformLobby : undefined}
           exitAction={
             phase === "playing" && isOwner
               ? {
                   label: t("returnToRoom"),
                   onSelect: () => void returnToRoom(),
                 }
-              : undefined
+              : controls.supportsGameLobby
+                ? { label: t("leaveRoom"), onSelect: controls.requestBack }
+                : undefined
           }
           icon={gameIconHref}
           isFavorite={isFavorite}
@@ -110,7 +116,7 @@ export function RoomGamePanels({
           }
           onShowHelp={gameHelpHref ? () => setGameHelpOpen(true) : undefined}
           onRefresh={
-            phase === "playing"
+            (phase === "playing" || controls.useGameLobby)
               ? () => {
                   refreshGame();
                 }

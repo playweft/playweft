@@ -5,7 +5,7 @@ import {
 import { normalizeLibraryGame } from "./library-game";
 
 const FAVORITE_GAMES_KEY = "playweft:favorite-games:v1";
-const MAX_FAVORITE_GAMES = 8;
+const MAX_FAVORITE_GAMES = 12;
 
 export function readFavoriteGames(): DiscoveredGame[] {
   return uniqueGames(readStoredGames().map(normalizeLibraryGame)).slice(

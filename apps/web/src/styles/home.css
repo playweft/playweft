@@ -467,16 +467,16 @@
   }
 
   .shelf-game {
-    padding: 8px;
+    padding: 8px 4px;
     text-align: center;
   }
 
   .shelf-game-slot {
-    --shelf-game-width: 108px;
+    --shelf-game-width: 80px;
   }
 
   .shelf-art {
-    width: 80px;
+    width: 64px;
     border-radius: 16px;
   }
 }

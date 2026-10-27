@@ -517,7 +517,7 @@
 .site-banner-carousel {
   position: relative;
   width: 100%;
-  max-width: 960px;
+  max-width: 720px;
   min-width: 0;
   margin-inline: auto;
 }

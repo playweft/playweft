@@ -55,6 +55,7 @@ const MAX_MANIFEST_BYTES = 64 * 1024;
 const MANIFEST_CACHE_NAME = "playweft:manifests:v1";
 const MANIFEST_CACHED_AT_HEADER = "X-Playweft-Cached-At";
 const MAX_CACHED_MANIFESTS = 256;
+const backgroundManifestRefreshes = new Map<string, Promise<void>>();
 
 class ManifestNetworkError extends Error {
   constructor(
@@ -85,9 +86,29 @@ export async function loadGameManifest(value: string): Promise<LoadedGame> {
   if (loadPolicy === "local-only") {
     const cachedText = await cachedManifestText(manifestUrl);
     if (cachedText === undefined)
-      throw new ManifestNetworkError(manifestUrl, new Error("Not stored locally"));
+      throw new ManifestNetworkError(
+        manifestUrl,
+        new Error("Not stored locally"),
+      );
     return loadedGameFromText(cachedText, manifestUrl);
   }
+
+  if (loadPolicy === "update-prompt") {
+    const cachedText = await cachedManifestText(manifestUrl);
+    if (cachedText !== undefined) {
+      let cached: LoadedGame | undefined;
+      try {
+        cached = loadedGameFromText(cachedText, manifestUrl);
+      } catch {
+        await deleteCachedManifest(manifestUrl);
+      }
+      if (cached) {
+        refreshManifestInBackground(manifestUrl);
+        return cached;
+      }
+    }
+  }
+
   try {
     const text = await fetchManifestText(manifestUrl);
     const loaded = loadedGameFromText(text, manifestUrl);
@@ -96,7 +117,10 @@ export async function loadGameManifest(value: string): Promise<LoadedGame> {
     }
     return loaded;
   } catch (error) {
-    if (loadPolicy === "cache-disabled" || !(error instanceof ManifestNetworkError)) {
+    if (
+      loadPolicy === "cache-disabled" ||
+      !(error instanceof ManifestNetworkError)
+    ) {
       throw error;
     }
     const cachedText = await cachedManifestText(manifestUrl);
@@ -108,6 +132,23 @@ export async function loadGameManifest(value: string): Promise<LoadedGame> {
       throw error;
     }
   }
+}
+
+function refreshManifestInBackground(manifestUrl: string): void {
+  if (backgroundManifestRefreshes.has(manifestUrl)) return;
+  const refresh = (async () => {
+    const text = await fetchManifestText(manifestUrl);
+    loadedGameFromText(text, manifestUrl);
+    // Only save valid updates while the policy still permits this refresh.
+    // The caller keeps its returned game; refreshing never reloads its iframe.
+    if (readAppLoadPolicy() === "update-prompt")
+      await cacheValidatedManifest(manifestUrl, text);
+  })()
+    .catch(() => {
+      // Keep the usable cached version on network or validation failures.
+    })
+    .finally(() => backgroundManifestRefreshes.delete(manifestUrl));
+  backgroundManifestRefreshes.set(manifestUrl, refresh);
 }
 
 function loadedGameFromText(text: string, manifestUrl: string): LoadedGame {
@@ -136,9 +177,7 @@ function loadedGameFromText(text: string, manifestUrl: string): LoadedGame {
     new URL(manifestUrl).origin,
   );
   if (!serverUrl) {
-    throw new Error(
-      "room server.entry must resolve to the Manifest origin",
-    );
+    throw new Error("room server.entry must resolve to the Manifest origin");
   }
   return {
     game,
@@ -156,13 +195,26 @@ function loadedGameFromText(text: string, manifestUrl: string): LoadedGame {
 }
 
 /** Server entries are always relative to the Manifest, never the iframe URL. */
-export function roomInitializationForServer(game: DiscoveredGame, value: RoomServer): NonNullable<LoadedGame["room"]> {
+export function roomInitializationForServer(
+  game: DiscoveredGame,
+  value: RoomServer,
+): NonNullable<LoadedGame["room"]> {
   const server = parseRoomServer(value);
-  const serverUrl = sameOriginUrl(server.entry, game.manifestUrl, new URL(game.manifestUrl).origin);
-  if (!serverUrl) throw new Error("server.entry must resolve to the Manifest origin");
+  const serverUrl = sameOriginUrl(
+    server.entry,
+    game.manifestUrl,
+    new URL(game.manifestUrl).origin,
+  );
+  if (!serverUrl)
+    throw new Error("server.entry must resolve to the Manifest origin");
   return {
-    gameId: game.manifestId, gameVersion: game.version, runtime: server.runtime, serverUrl,
-    minPlayers: 1, maxPlayers: 32, liveRoom: server.persistence === "live",
+    gameId: game.manifestId,
+    gameVersion: game.version,
+    runtime: server.runtime,
+    serverUrl,
+    minPlayers: 1,
+    maxPlayers: 32,
+    liveRoom: server.persistence === "live",
   };
 }
 
@@ -190,12 +242,15 @@ export function isStoredDiscoveredGame(
     (value.themeColor === undefined || isCssColor(value.themeColor)) &&
     (value.orientation === undefined ||
       isStoredOrientation(value.orientation)) &&
-    (value.embeddedLobby === undefined || typeof value.embeddedLobby === "boolean") &&
+    (value.embeddedLobby === undefined ||
+      typeof value.embeddedLobby === "boolean") &&
     (value.liveRoom === undefined || typeof value.liveRoom === "boolean") &&
     Array.isArray(value.modes) &&
     value.modes.length > 0 &&
     value.modes.every((mode) => mode === "solo" || mode === "room") &&
-    (value.launchMode === undefined || value.launchMode === "auto" || value.launchMode === "choose" ||
+    (value.launchMode === undefined ||
+      value.launchMode === "auto" ||
+      value.launchMode === "choose" ||
       (value.launchMode === "solo" && value.modes.includes("solo")))
   );
 }
@@ -269,7 +324,9 @@ function discoveredGame(
     ...(manifest.orientation ? { orientation: manifest.orientation } : {}),
     modes,
     ...(manifest.room || !manifest.modes.room ? { embeddedLobby: true } : {}),
-    ...(manifest.launch_mode !== undefined ? { launchMode: manifest.launch_mode } : {}),
+    ...(manifest.launch_mode !== undefined
+      ? { launchMode: manifest.launch_mode }
+      : {}),
     ...((manifest.room ?? manifest.modes.room)?.server.persistence === "live"
       ? { liveRoom: true }
       : {}),
@@ -342,7 +399,9 @@ async function fetchManifestText(url: string): Promise<string> {
       }
       const text = await response.text();
       if (new TextEncoder().encode(text).byteLength > MAX_MANIFEST_BYTES) {
-        throw new Error(`Resource exceeds the ${MAX_MANIFEST_BYTES}-byte limit`);
+        throw new Error(
+          `Resource exceeds the ${MAX_MANIFEST_BYTES}-byte limit`,
+        );
       }
       return text;
     } catch (error) {
@@ -361,7 +420,10 @@ function isNetworkFailure(error: unknown): boolean {
   );
 }
 
-async function cacheValidatedManifest(url: string, text: string): Promise<void> {
+async function cacheValidatedManifest(
+  url: string,
+  text: string,
+): Promise<void> {
   if (typeof caches === "undefined") return;
   try {
     const cache = await caches.open(MANIFEST_CACHE_NAME);
@@ -384,9 +446,7 @@ async function cacheValidatedManifest(url: string, text: string): Promise<void> 
 async function cachedManifestText(url: string): Promise<string | undefined> {
   if (typeof caches === "undefined") return undefined;
   try {
-    const response = await (
-      await caches.open(MANIFEST_CACHE_NAME)
-    ).match(url);
+    const response = await (await caches.open(MANIFEST_CACHE_NAME)).match(url);
     if (!response) return undefined;
     const text = await response.text();
     return new TextEncoder().encode(text).byteLength <= MAX_MANIFEST_BYTES

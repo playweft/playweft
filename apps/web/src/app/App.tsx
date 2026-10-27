@@ -7,6 +7,7 @@ import SoloHost from "@/features/game/SoloHost";
 import UpdateToast from "@/components/UpdateToast";
 import {
   gameLaunchPath,
+  roomReturnPath,
   gameModeFromExternalLaunch,
   gameUrlFromExternalLaunch,
 } from "@/features/game/game-launch-link";
@@ -129,18 +130,19 @@ export default function App() {
     return new Promise((resolve) => identityWaiters.current.push(resolve));
   }, []);
 
-  const navigate = useCallback((nextPath: string, replace = false) => {
+  const navigate = useCallback((nextPath: string, replace = false, state: Record<string, unknown> = {}) => {
     entryGeneration.current += 1;
     handledExternalGameUrl.current = undefined;
     setEntryStatus(undefined);
     window.clearTimeout(soloExitTimer.current);
     setSoloClosing(false);
-    if (replace) window.history.replaceState({}, "", nextPath);
-    else window.history.pushState({}, "", nextPath);
+    if (replace) window.history.replaceState(state, "", nextPath);
+    else window.history.pushState(state, "", nextPath);
     setLocation(readAppLocation());
   }, []);
   const enterCreatedRoom = useCallback((roomId: string) => {
-    navigate(`/r/${roomId}`, true);
+    const manifestUrl = soloGameRef.current?.manifestUrl;
+    navigate(`/r/${roomId}`, true, manifestUrl ? { roomReturn: { roomId, manifestUrl } } : {});
     setSoloGame(undefined);
   }, [navigate]);
   const changeEmbeddedRoom = useCallback((roomId?: string) => {
@@ -213,7 +215,7 @@ export default function App() {
         identityReady={identityReady}
         nickname={nickname}
         roomId={roomId}
-        onBack={() => navigate("/", true)}
+        onBack={() => navigate(roomReturnPath(roomId, window.history.state), true)}
         onGameDiscovered={game => {
           saveRecentGame(game);
           if (game.embeddedLobby) {

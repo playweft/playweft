@@ -59,12 +59,14 @@ const game = { manifestUrl: "https://game.example/demo/playweft.json", url: "htt
 function fixture(initial = "/", selectedGame = game, overrides = {}) {
   const origin = overrides.origin ?? "https://platform.example";
   const history = [`${origin}/`, new URL(initial, origin).href];
+  const states = [null, overrides.historyState ?? null];
   let cursor = 1, pops = new Set(), homeKey, homeRenderer, homeModule, tree, homeTree;
   const window = {
     location: new URL(history[cursor]),
     history: {
-      pushState(_state, _title, path) { history.splice(cursor + 1); history.push(new URL(path, window.location).href); cursor++; window.location = new URL(history[cursor]); },
-      replaceState(_state, _title, path) { history[cursor] = new URL(path, window.location).href; window.location = new URL(history[cursor]); },
+      get state() { return states[cursor]; },
+      pushState(state, _title, path) { history.splice(cursor + 1); states.splice(cursor + 1); history.push(new URL(path, window.location).href); states.push(state); cursor++; window.location = new URL(history[cursor]); },
+      replaceState(state, _title, path) { history[cursor] = new URL(path, window.location).href; states[cursor] = state; window.location = new URL(history[cursor]); },
     },
     addEventListener: (_type, listener) => pops.add(listener),
     removeEventListener: (_type, listener) => pops.delete(listener),
@@ -306,4 +308,35 @@ test('room invitations for embedded games open the same persistent host used by 
   assert.equal(find(f.tree,'RoomHost'),undefined);assert.equal(f.window.location.pathname,'/r/FZCC');
   host.props.onRoomChange();await f.settle();assert.ok(find(f.tree,'SoloHost'));
   assert.equal(f.window.location.pathname+f.window.location.search,'/?game=game.example/demo/&mode=solo');f.dispose();
+});
+
+
+test("API-created rooms return to the source game when dissolved or left, including after refresh", async () => {
+  const f = fixture("/?game=game.example/demo/&mode=solo"); await f.settle();
+  const count = f.history.length;
+  find(f.tree, "SoloHost").props.onEnterRoom("FZCC"); await f.settle();
+  assert.equal(f.window.location.pathname, "/r/FZCC");
+  assert.equal(f.history.length, count);
+  assert.equal(f.window.history.state.roomReturn.manifestUrl, game.manifestUrl);
+  const fresh = fixture("/r/FZCC", game, { historyState: structuredClone(f.window.history.state) });
+  await fresh.settle();
+  find(fresh.tree, "RoomHost").props.onBack(); await fresh.settle();
+  assert.ok(find(fresh.tree, "SoloHost"));
+  assert.equal(fresh.window.location.pathname + fresh.window.location.search, f.links.gameLaunchPath(game.manifestUrl, "solo"));
+  find(f.tree, "RoomHost").props.onBack(); await f.settle();
+  assert.ok(find(f.tree, "SoloHost"));
+  assert.equal(f.history.length, count);
+  assert.equal(f.window.history.state.roomReturn, undefined);
+  fresh.dispose(); f.dispose();
+});
+
+test("ordinary invitations and unrelated or invalid return targets still exit to the game list", async () => {
+  for (const state of [null, { roomReturn: { roomId: "OTHER", manifestUrl: game.manifestUrl } },
+    { roomReturn: { roomId: "FZCC", manifestUrl: "javascript:alert(1)" } },
+    { roomReturn: { roomId: "FZCC", manifestUrl: "invalid" } }]) {
+    const f = fixture("/r/FZCC", game, { historyState: state }); await f.settle();
+    find(f.tree, "RoomHost").props.onBack(); await f.settle();
+    assert.equal(f.window.location.pathname + f.window.location.search, "/");
+    assert.equal(find(f.tree, "SoloHost"), undefined); f.dispose();
+  }
 });

@@ -316,7 +316,12 @@ a game cannot select another Manifest, a player identity, or transfer solo
 state through this call. The platform then replaces the solo URL with
 `/r/:roomId`. Players join and prepare in the lobby; starting the match creates
 a new iframe whose `game.initialize` reports `mode: "room"`. This does not
-change the mode of the running solo iframe or migrate its progress.
+change the mode of the running solo iframe or migrate its progress. When this
+API-created room ends (including dissolution or leaving), the creating browser
+returns to the source game's solo entry. The return destination is kept in the
+room history entry and survives a refresh; it is not added to the invitation URL.
+Rooms opened directly from the game list or an invitation retain their normal
+return-to-list behavior.
 
 For an existing JSON-RPC client:
 

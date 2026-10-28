@@ -6,11 +6,13 @@ import RoomHost from "@/features/room/RoomHost";
 import SoloHost from "@/features/game/SoloHost";
 import UpdateToast from "@/components/UpdateToast";
 import {
-  gameLaunchPath,
+  soloGameLaunchPath,
+  isSoloGameLocation,
   roomReturnPath,
   gameModeFromExternalLaunch,
   gameUrlFromExternalLaunch,
 } from "@/features/game/game-launch-link";
+import { gameLaunchMode } from "@/features/game/game-launch-mode";
 import { saveRecentGame } from "@/features/library/recent-games";
 import type { DiscoveredGame as RecentGame } from "@/features/game/game-manifest";
 import { useI18n } from "@/app/i18n";
@@ -51,8 +53,7 @@ export default function App() {
   const externalGameMode = gameModeFromExternalLaunch(location);
   // soloGame caches a discovered Manifest; the URL decides which view is active.
   const activeSoloGame =
-    soloGame && ((externalGameMode === "solo" &&
-    location === gameLaunchPath(soloGame.manifestUrl, "solo")) || (embeddedRoomId !== undefined && path === `/r/${embeddedRoomId}`))
+    soloGame && (isSoloGameLocation(soloGame, location) || (embeddedRoomId !== undefined && path === `/r/${embeddedRoomId}`))
       ? soloGame
       : undefined;
   const visibleSoloGame = soloClosing ? soloGame : activeSoloGame;
@@ -67,7 +68,7 @@ export default function App() {
       setLocation(nextLocation);
       if (
         !soloGameRef.current ||
-        nextLocation === gameLaunchPath(soloGameRef.current.manifestUrl, "solo")
+        isSoloGameLocation(soloGameRef.current, nextLocation)
       ) return;
       setSoloClosing(true);
       window.clearTimeout(soloExitTimer.current);
@@ -141,20 +142,20 @@ export default function App() {
     setLocation(readAppLocation());
   }, []);
   const enterCreatedRoom = useCallback((roomId: string) => {
-    const manifestUrl = soloGameRef.current?.manifestUrl;
-    navigate(`/r/${roomId}`, true, manifestUrl ? { roomReturn: { roomId, manifestUrl } } : {});
+    const game = soloGameRef.current;
+    navigate(`/r/${roomId}`, true, game ? { roomReturn: { roomId, manifestUrl: game.manifestUrl, soloModeOverride: gameLaunchMode(game) === "choose" } } : {});
     setSoloGame(undefined);
   }, [navigate]);
   const changeEmbeddedRoom = useCallback((roomId?: string) => {
     setEmbeddedRoomId(roomId);
     const game = soloGameRef.current;
     if (roomId) navigate(`/r/${roomId}`, true);
-    else if (game) navigate(gameLaunchPath(game.manifestUrl, "solo"), true);
+    else if (game) navigate(soloGameLaunchPath(game), true);
   }, [navigate]);
   const openSoloGame = useCallback((game: RecentGame) => {
     void prepareGameOrientation(game.orientation);
-    const nextPath = gameLaunchPath(game.manifestUrl, "solo");
-    if (nextPath !== readAppLocation()) {
+    const nextPath = soloGameLaunchPath(game);
+    if (!isSoloGameLocation(game, readAppLocation())) {
       navigate(nextPath, Boolean(gameUrlFromExternalLaunch(readAppLocation())));
     }
     window.clearTimeout(soloExitTimer.current);

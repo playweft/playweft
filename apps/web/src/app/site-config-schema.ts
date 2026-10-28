@@ -4,9 +4,14 @@ export interface SiteBanner {
   alt: string;
   href: string;
 }
+export interface SiteUrlMapping {
+  prefix: string;
+  target: string;
+}
 export interface SiteConfig {
   featuredGames: FeaturedGameSource[];
   banners: SiteBanner[];
+  urlMappings: SiteUrlMapping[];
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -32,13 +37,36 @@ function url(value: unknown, path: string): string {
 }
 export function parseSiteConfig(value: unknown): SiteConfig {
   if (!object(value)) fail("root", "must be an object");
-  keys(value, ["$schema", "featuredGames", "banners"], "root");
+  keys(value, ["$schema", "featuredGames", "banners", "urlMappings"], "root");
   if (value.$schema !== undefined && typeof value.$schema !== "string") fail("$schema", "must be a string");
   const sources = value.featuredGames === undefined ? [{ manifestUrl: "/games/rps/playweft.json" }] : value.featuredGames;
   const banners = value.banners === undefined ? [] : value.banners;
   if (!Array.isArray(sources)) fail("featuredGames", "must be an array");
   if (!Array.isArray(banners)) fail("banners", "must be an array");
+  const mappings = value.urlMappings === undefined ? [] : value.urlMappings;
+  if (!Array.isArray(mappings)) fail("urlMappings", "must be an array");
+  const prefixes = new Set<string>();
+  const urlMappings = mappings.map((mapping, index) => {
+    const path = `urlMappings[${index}]`;
+    if (!object(mapping)) fail(path, "must be an object");
+    keys(mapping, ["prefix", "target"], path);
+    if (typeof mapping.prefix !== "string") fail(`${path}.prefix`, "must be a path prefix");
+    const prefix = mapping.prefix.trim().replace(/^\/+|\/+$/g, "");
+    if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(prefix))
+      fail(`${path}.prefix`, "must contain nonempty path segments using letters, digits, underscores or hyphens");
+    if (["api", "r", "games", "assets", "icons", "cdn-cgi", ".playweft"].includes(prefix.split("/")[0]))
+      fail(`${path}.prefix`, "conflicts with a platform route");
+    if (prefixes.has(prefix)) fail(`${path}.prefix`, "is duplicated");
+    prefixes.add(prefix);
+    const target = url(mapping.target, `${path}.target`);
+    if (!/^https?:\/\//i.test(target) && !/^\/(?!\/)/.test(target))
+      fail(`${path}.target`, "must be an absolute HTTP(S) URL or a root-relative path");
+    const parsed = new URL(target, "https://site.invalid/");
+    if (parsed.search || parsed.hash) fail(`${path}.target`, "must not contain a query or fragment");
+    return { prefix, target };
+  });
   return {
+    urlMappings,
     featuredGames: sources.map((source, index): FeaturedGameSource => {
       const path = `featuredGames[${index}]`;
       if (!object(source)) fail(path, "must be an object");

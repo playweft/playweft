@@ -5,5 +5,11 @@
       "manifestUrl": "/games/rps/playweft.json"
     }
   ],
-  "banners": []
+  "banners": [],
+  "urlMappings": [
+    {
+      "prefix": "abc",
+      "target": "https://games.example.com/"
+    }
+  ]
 }

@@ -68,6 +68,31 @@
           }
         }
       }
+    },
+    "urlMappings": {
+      "type": "array",
+      "default": [],
+      "description": "Launch URL aliases. Longest complete path prefix wins; platform origin is read from the current URL.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "prefix",
+          "target"
+        ],
+        "properties": {
+          "prefix": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path prefix, e.g. abc or /abc/. Platform routes and duplicate prefixes are rejected."
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Absolute HTTP(S) base URL or root-relative base path, without query or fragment. Matching suffix is appended."
+          }
+        }
+      }
     }
   }
 }

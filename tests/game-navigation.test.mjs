@@ -73,7 +73,12 @@ function fixture(initial = "/", selectedGame = game, overrides = {}) {
     matchMedia: () => ({ matches: true }), setTimeout, clearTimeout,
   };
   const appRenderer = renderer();
-  const links = load("features/game/game-launch-link.ts", {}, window);
+  const mappings = overrides.urlMappings ?? [];
+  const links = load("features/game/game-launch-link.ts", {
+    "@/app/site-config": { siteConfig: { urlMappings: mappings } },
+    "@/app/url-mapping": load("app/url-mapping.ts", {}, window),
+    "./game-launch-mode": load("features/game/game-launch-mode.ts", {}, window),
+  }, window);
   const common = {
     "react/jsx-runtime": { jsx, jsxs: jsx },
     "@/app/i18n": { useI18n: () => ({ locale: "en", t: key => key }) },
@@ -163,7 +168,7 @@ test("homepage room-code entry pushes history instead of replacing homepage", as
   find(f.home, "form").props.onSubmit({ preventDefault() {} }); await f.settle();
   assert.equal(f.window.location.pathname, "/r/FZCC"); assert.equal(f.history.length, 3); f.dispose();
 });
-test("solo-only shared links auto-replace; unsupported explicit solo mode never mounts a game", async () => {
+test("solo-only shared links open directly; unsupported explicit solo mode never mounts a game", async () => {
   const solo = fixture("/?game=game.example/demo/", { ...game, modes: ["solo"] }); await solo.settle();
   assert.ok(find(solo.tree, "SoloHost")); assert.equal(solo.history.length, 2); solo.dispose();
   const room = fixture("/?game=game.example/demo/&mode=solo", { ...game, modes: ["room"] }); await room.settle();
@@ -297,7 +302,7 @@ test('embedded room URL changes retain the same game host and replace the curren
   const joined=find(f.tree,'SoloHost');assert.ok(joined);assert.equal(joined.key,first.key);
   assert.equal(find(f.tree,'RoomHost'),undefined);assert.equal(f.window.location.pathname,'/r/FZCC');assert.equal(f.history.length,entries);
   joined.props.onRoomChange();await f.settle();assert.ok(find(f.tree,'SoloHost'));
-  assert.equal(f.window.location.pathname+f.window.location.search,'/?game=game.example/demo/&mode=solo');assert.equal(f.history.length,entries);
+  assert.equal(f.window.location.pathname+f.window.location.search,'/?game=game.example/demo/');assert.equal(f.history.length,entries);
   f.dispose();
 });
 
@@ -338,5 +343,85 @@ test("ordinary invitations and unrelated or invalid return targets still exit to
     find(f.tree, "RoomHost").props.onBack(); await f.settle();
     assert.equal(f.window.location.pathname + f.window.location.search, "/");
     assert.equal(find(f.tree, "SoloHost"), undefined); f.dispose();
+  }
+});
+
+test("mapped share links stay on the alias and mode changes retain normal back navigation", async () => {
+  const urlMappings=[{prefix:"abc",target:"https://game.example/"}];
+  const f=fixture("/abc/demo/",game,{urlMappings});
+  await f.settle();
+  assert.equal(f.window.location.pathname,"/abc/demo/");
+  assert.equal(f.window.location.search,"");
+  assert.equal(f.history.length,2);
+  assert.ok(find(f.home,"LaunchChoiceDialog"));
+  assert.equal(f.links.gameLaunchLink(game.manifestUrl),"https://platform.example/abc/demo/");
+  find(f.home,"LaunchChoiceDialog").props.onPlaySolo();await f.settle();
+  assert.equal(f.window.location.pathname+f.window.location.search,"/abc/demo/?mode=solo");
+  assert.equal(f.history.length,2);
+  assert.ok(find(f.tree,"SoloHost"));
+  await f.back();assert.equal(f.window.location.pathname,"/");
+  await f.forward();assert.ok(find(f.tree,"SoloHost"));
+  f.dispose();
+});
+test("fresh alias solo links restore directly and shelf selection generates aliases",async()=>{
+  const urlMappings=[{prefix:"abc",target:"https://game.example/"}];
+  const f=fixture("/abc/demo/?mode=solo",game,{urlMappings});await f.settle();
+  assert.ok(find(f.tree,"SoloHost"));assert.equal(f.history.length,2);
+  assert.equal(f.window.location.pathname+f.window.location.search,"/abc/demo/?mode=solo");
+  f.dispose();
+  const home=fixture("/",game,{urlMappings});await home.settle();
+  find(home.home,"GameShelf").props.onSelect(game);await home.settle();
+  assert.equal(home.window.location.pathname,"/abc/demo/");
+  assert.equal(home.window.location.search,"");assert.equal(home.history.length,3);
+  home.dispose();
+});
+
+test("direct-launch entries omit mode through selection, refresh and back/forward, including aliases", async () => {
+  for (const launchMode of [undefined,"auto","solo"]) for (const aliases of [false,true]) {
+    const direct={...game,launchMode};
+    const urlMappings=aliases?[{prefix:"g",target:"https://game.example/"}]:[];
+    const expected=aliases?"/g/demo/":"/?game=game.example/demo/";
+    const f=fixture("/",direct,{urlMappings});await f.settle();
+    find(f.home,"GameShelf").props.onSelect(direct);await f.settle();
+    assert.ok(find(f.tree,"SoloHost"));
+    assert.equal(f.window.location.pathname+f.window.location.search,expected);
+    assert.equal(f.history.length,3);
+    const refreshed=fixture(expected,direct,{urlMappings});await refreshed.settle();
+    assert.ok(find(refreshed.tree,"SoloHost"));assert.equal(refreshed.history.length,2);
+    assert.equal(refreshed.window.location.pathname+refreshed.window.location.search,expected);
+    refreshed.dispose();
+    await f.back();assert.equal(f.window.location.pathname,"/");assert.equal(find(f.tree,"SoloHost"),undefined);
+    await f.forward();assert.ok(find(f.tree,"SoloHost"));
+    assert.equal(f.window.location.pathname+f.window.location.search,expected);f.dispose();
+  }
+});
+test("older explicit solo links remain valid without rewriting their address", async () => {
+  const direct={...game,launchMode:"auto"};
+  for (const [path,urlMappings] of [
+    ["/?game=game.example/demo/&mode=solo",[]],
+    ["/g/demo/?mode=solo",[{prefix:"g",target:"https://game.example/"}]],
+  ]) {
+    const f=fixture(path,direct,{urlMappings});await f.settle();
+    assert.ok(find(f.tree,"SoloHost"));
+    assert.equal(f.window.location.pathname+f.window.location.search,path);
+    assert.equal(f.history.length,2);f.dispose();
+  }
+});
+test("solo-only games omit mode even when launch_mode is choose",async()=>{
+  const direct={...game,modes:["solo"]};
+  const f=fixture('/?game=game.example/demo/',direct);await f.settle();
+  assert.ok(find(f.tree,'SoloHost'));
+  assert.equal(f.window.location.search,'?game=game.example/demo/');f.dispose();
+});
+test("direct games return from API-created rooms without adding a solo override, including refresh", async () => {
+  const direct={...game,launchMode:"auto"};
+  const f=fixture('/?game=game.example/demo/',direct);await f.settle();
+  find(f.tree,"SoloHost").props.onEnterRoom("FZCC");await f.settle();
+  const fresh=fixture('/r/FZCC',direct,{historyState:f.window.history.state});await fresh.settle();
+  for (const page of [f,fresh]) {
+    find(page.tree,"RoomHost").props.onBack();await page.settle();
+    assert.ok(find(page.tree,"SoloHost"));
+    assert.equal(page.window.location.search,'?game=game.example/demo/');
+    assert.equal(page.history.length,2);page.dispose();
   }
 });

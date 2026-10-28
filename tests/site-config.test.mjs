@@ -16,14 +16,14 @@ function load(path, imports = {}, extras = {}) {
 const { parseSiteConfig } = load('../apps/web/src/app/site-config-schema.ts');
 const plain = value => JSON.parse(JSON.stringify(value));
 test('defaults, explicit empty lists and the checked-in example parse', () => {
-  assert.deepEqual(plain(parseSiteConfig({})), { featuredGames: [{manifestUrl:'/games/rps/playweft.json'}], banners: [] });
-  assert.deepEqual(plain(parseSiteConfig({featuredGames:[], banners:[]})), {featuredGames:[],banners:[]});
+  assert.deepEqual(plain(parseSiteConfig({})), { featuredGames: [{manifestUrl:'/games/rps/playweft.json'}], banners: [], urlMappings: [] });
+  assert.deepEqual(plain(parseSiteConfig({featuredGames:[], banners:[]})), {featuredGames:[],banners:[],urlMappings:[]});
   parseSiteConfig(JSON.parse(readFileSync(new URL('../apps/web/site.config.example.json',import.meta.url),'utf8')));
 });
 test('sources and banners preserve order and accept relative and HTTP(S) URLs', () => {
   const config = { featuredGames: [{listUrl:'https://games.example/list.json'},{manifestUrl:'/games/demo/playweft.json'}],
     banners: [{image:'/event.webp',alt:'Event',href:'/?game=games.example/demo/'},{image:'https://cdn.example/image.webp',alt:'Second',href:'https://example.com/'}] };
-  assert.deepEqual(plain(parseSiteConfig(config)), config);
+  assert.deepEqual(plain(parseSiteConfig(config)), {...config,urlMappings:[]});
 });
 test('invalid structure, ambiguous sources, typos and unsafe URLs fail with field paths', () => {
   for (const value of [[],null,{featuredGames:null},{banners:null},{banner:[]},{featuredGames:[{}]},
@@ -136,4 +136,46 @@ test('hover, dragging, focus, hidden tabs and reduced motion suspend rotation; r
  f.media.matches=true;f.media.emit('change');assert.equal(f.timers.size,0);
  f.media.matches=false;f.media.emit('change');assert.equal(f.timers.size,1);
  f.cleanup();
+});
+
+const { gameUrlFromMappedPath, mappedPathFromGameUrl } = load('../apps/web/src/app/url-mapping.ts');
+test('aliases resolve internally and generated game URLs map back to the shortest configured path', () => {
+  const mappings = parseSiteConfig({ urlMappings: [
+    {prefix:'/abc/',target:'https://games.example/base/'},
+    {prefix:'special',target:'https://games.example/base/special/'},
+    {prefix:'local',target:'/bundled/'},
+  ] }).urlMappings;
+  const origin='https://platform.example';
+  assert.equal(gameUrlFromMappedPath('/abc/xxx?mode=solo',mappings,origin),'https://games.example/base/xxx');
+  assert.equal(gameUrlFromMappedPath('/abc',mappings,origin),'https://games.example/base/');
+  assert.equal(gameUrlFromMappedPath('/local/demo',mappings,origin),'https://platform.example/bundled/demo');
+  assert.equal(gameUrlFromMappedPath('/abcdef/xxx',mappings,origin),undefined);
+  assert.equal(gameUrlFromMappedPath('/r/room',mappings,origin),undefined);
+  assert.equal(gameUrlFromMappedPath('https://other.example/abc/x',mappings,origin),undefined);
+  assert.equal(gameUrlFromMappedPath('/abc//evil.example/x',mappings,origin),'https://games.example/base/evil.example/x');
+  assert.equal(mappedPathFromGameUrl('https://games.example/base/xxx',mappings,origin),'/abc/xxx');
+  assert.equal(mappedPathFromGameUrl('https://games.example/base/special/demo/',mappings,origin),'/special/demo/');
+  assert.equal(mappedPathFromGameUrl('https://games.example/base/a%20b/',mappings,origin),'/abc/a%20b/');
+  assert.equal(mappedPathFromGameUrl('https://games.example/baseball/x',mappings,origin),undefined);
+  assert.equal(mappedPathFromGameUrl('https://games.example/base/x?token=1',mappings,origin),undefined);
+  assert.equal(mappedPathFromGameUrl('https://other.example/base/x',mappings,origin),undefined);
+  const shadowed=[{prefix:'abc',target:'https://games.example/'},{prefix:'abc/special',target:'https://other.example/'}];
+  assert.equal(mappedPathFromGameUrl('https://games.example/special/demo',shadowed,origin),undefined);
+});
+test('invalid URL mappings fail at build time', () => {
+  for (const urlMappings of [null,false,{},[{}],[{prefix:'/',target:'/x'}],
+    [{prefix:'api',target:'/x'}],[{prefix:'r/x',target:'/x'}],
+    [{prefix:'a/../b',target:'/x'}],[{prefix:'a',target:'javascript:alert(1)'}],
+    [{prefix:'a',target:'//other.example'}],[{prefix:'a',target:'https://games.example/?game=x'}],
+    [{prefix:'a',target:'/x#hash'}],[{prefix:'a',target:'relative/path'}],
+    [{prefix:'a',target:'/x'},{prefix:'/a/',target:'/y'}]]) {
+    assert.throws(()=>parseSiteConfig({urlMappings}),/Invalid site config:/);
+  }
+});
+
+test('mapping prefixes trim surrounding whitespace and slashes', () => {
+  for (const prefix of ['abc','/abc','abc/','/abc/','  ///abc///  ']) {
+    assert.equal(parseSiteConfig({urlMappings:[{prefix,target:'/bundled/'}]}).urlMappings[0].prefix,'abc');
+  }
+  assert.equal(parseSiteConfig({urlMappings:[{prefix:'/abc/sub/',target:'/bundled/'}]}).urlMappings[0].prefix,'abc/sub');
 });

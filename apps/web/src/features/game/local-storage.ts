@@ -46,14 +46,65 @@ export function createGameStorageDatabase({
         return reject(
           new DOMException("IndexedDB is unavailable", "InvalidStateError"),
         );
-      const request = factory.open(name, 1);
+      const request = factory.open(name, 2);
+      let migrationFailure: unknown;
       let failed = false;
-      request.onupgradeneeded = () => {
-        const entries = request.result.createObjectStore("entries", {
-          keyPath: ["origin", "key"],
-        });
-        entries.createIndex("byOrigin", "origin");
-        request.result.createObjectStore("origins", { keyPath: "origin" });
+      request.onupgradeneeded = (event) => {
+        if (event.oldVersion === 0) {
+          const entries = request.result.createObjectStore("entries", {
+            keyPath: ["origin", "key"],
+          });
+          entries.createIndex("byOrigin", "origin");
+          request.result.createObjectStore("origins", { keyPath: "origin" });
+          return;
+        }
+        // Temporary domain migration, executed once by the v1 -> v2 upgrade.
+        // Keep the source copy and prefer any already-written destination data.
+        const tx = request.transaction!;
+        const entries = tx.objectStore("entries");
+        const origins = tx.objectStore("origins");
+        const cursorRequest = entries.openCursor();
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) return;
+          const entry = cursor.value as Entry;
+          const source = new URL(entry.origin);
+          if (source.hostname !== "game.longern.com") {
+            cursor.continue();
+            return;
+          }
+          source.hostname = "games.longern.com";
+          const origin = source.origin;
+          const destination = entries.get([origin, entry.key]);
+          destination.onsuccess = () => {
+            if (destination.result !== undefined) {
+              cursor.continue();
+              return;
+            }
+            const originRequest = origins.get(origin);
+            originRequest.onsuccess = () => {
+              const meta: Origin = originRequest.result ?? {
+                origin, entryCount: 0, usageBytes: 0, updatedAt: 0,
+              };
+              const sizeBytes = 2 * (entry.key.length + entry.value.length);
+              if (meta.usageBytes + sizeBytes > maxOriginBytes) {
+                migrationFailure = new DOMException(
+                  "Migrating game.longern.com storage would exceed the new origin's quota",
+                  "QuotaExceededError",
+                );
+                tx.abort();
+                return;
+              }
+              entries.put({ ...entry, origin, sizeBytes } satisfies Entry);
+              origins.put({
+                ...meta, entryCount: meta.entryCount + 1,
+                usageBytes: meta.usageBytes + sizeBytes,
+                updatedAt: Math.max(meta.updatedAt, entry.updatedAt),
+              } satisfies Origin);
+              cursor.continue();
+            };
+          };
+        };
       };
       request.onblocked = () => {
         failed = true;
@@ -64,7 +115,7 @@ export function createGameStorageDatabase({
           ),
         );
       };
-      request.onerror = () => reject(request.error);
+      request.onerror = () => reject(migrationFailure ?? request.error);
       request.onsuccess = () => {
         const db = request.result;
         if (failed) {

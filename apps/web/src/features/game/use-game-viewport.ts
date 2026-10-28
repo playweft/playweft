@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { GameManifestOrientation } from "@playweft/game-protocol";
 
 const GAME_RUNNING_CLASS = "game-running";
@@ -40,7 +40,8 @@ type OrientationLockResult =
 
 let pendingGameOrientation: Promise<OrientationLockResult> | undefined;
 let gameFullscreenOwned = false;
-let gameOrientationLockOwned = false;
+let pendingGameFullscreen: Promise<boolean> | undefined;
+let gameViewportGeneration = 0;
 let gameOrientationLockUnsupported = false;
 
 function preferredOrientation(
@@ -89,9 +90,7 @@ function landscapeCompatibilityRotationFromGravity(
   // when the screen is tipped towards or away from the user. It is therefore
   // a more reliable landscape-side signal than gamma alone.
   const horizontalGravity = gravity.x / magnitude;
-  if (
-    Math.abs(horizontalGravity) < LANDSCAPE_COMPATIBILITY_SWITCH_THRESHOLD
-  ) {
+  if (Math.abs(horizontalGravity) < LANDSCAPE_COMPATIBILITY_SWITCH_THRESHOLD) {
     return undefined;
   }
   return horizontalGravity > 0 ? "90deg" : "-90deg";
@@ -239,7 +238,6 @@ async function lockGameOrientation(
   if (!screenOrientation?.lock) return "failed";
   try {
     await screenOrientation.lock(orientation);
-    gameOrientationLockOwned = true;
     return "locked";
   } catch (error) {
     console.warn(`Could not lock game orientation to ${orientation}`, error);
@@ -279,18 +277,25 @@ function supportsGameFullscreen(): boolean {
 }
 
 async function enterGameFullscreen(): Promise<boolean> {
+  if (pendingGameFullscreen) return pendingGameFullscreen;
   if (document.fullscreenElement === document.documentElement) return true;
   const requestFullscreen = document.documentElement.requestFullscreen;
   if (!requestFullscreen) return false;
-  try {
-    await requestFullscreen.call(document.documentElement);
-    gameFullscreenOwned =
-      document.fullscreenElement === document.documentElement;
-    return gameFullscreenOwned;
-  } catch (error) {
-    console.warn("Could not enter fullscreen for game orientation", error);
-    return false;
-  }
+  const attempt = (async () => {
+    try {
+      await requestFullscreen.call(document.documentElement);
+      gameFullscreenOwned = document.fullscreenElement === document.documentElement;
+      return gameFullscreenOwned;
+    } catch (error) {
+      console.warn("Could not enter fullscreen for game orientation", error);
+      return false;
+    }
+  })();
+  const pending = attempt.finally(() => {
+    if (pendingGameFullscreen === pending) pendingGameFullscreen = undefined;
+  });
+  pendingGameFullscreen = pending;
+  return pending;
 }
 
 export function prepareGameOrientation(
@@ -324,9 +329,13 @@ export function prepareGameOrientation(
 
 export async function releaseGameFullscreen(): Promise<void> {
   gameOrientationLockUnsupported = false;
-  if (gameOrientationLockOwned) {
-    gameOrientationLockOwned = false;
+  // Fullscreen events and browser transitions do not reliably reflect the
+  // native orientation lock. Always release it when retiring a game session.
+  try {
     lockableOrientation()?.unlock();
+  } catch (error) {
+    // A hidden/inactive document may reject unlock. Still exit owned fullscreen.
+    console.warn("Could not unlock game orientation", error);
   }
   if (
     !gameFullscreenOwned ||
@@ -356,10 +365,9 @@ export function useGameViewport(
   const [landscapeCompatibility, setLandscapeCompatibility] = useState(false);
   const [landscapeCompatibilityRotation, setLandscapeCompatibilityRotation] =
     useState<LandscapeCompatibilityRotation>();
-  const [viewportLandscape, setViewportLandscape] = useState(() =>
-    window.matchMedia("(orientation: landscape)").matches,
+  const [viewportLandscape, setViewportLandscape] = useState(
+    () => window.matchMedia("(orientation: landscape)").matches,
   );
-  const orientationEffectGeneration = useRef(0);
 
   useEffect(() => {
     const query = window.matchMedia("(orientation: landscape)");
@@ -579,9 +587,10 @@ export function useGameViewport(
     const canLockOrientation =
       supportsMobileOrientationLock() && !orientationLockUnsupported;
     const landscapeQuery = window.matchMedia("(orientation: landscape)");
-    const generation = ++orientationEffectGeneration.current;
+    const viewportGeneration = ++gameViewportGeneration;
     let effectActive = true;
     let hasEnteredGame = false;
+    let orientationAttempt: Promise<OrientationLockResult> | undefined;
 
     const syncViewportActions = (action: "enter" | "restore") => {
       if (!effectActive) return;
@@ -607,9 +616,10 @@ export function useGameViewport(
         return;
       }
       const pendingAttempt = pendingGameOrientation;
-      const result = pendingAttempt
-        ? await pendingAttempt
-        : await lockGameOrientation(preference);
+      const attempt = pendingAttempt ?? lockGameOrientation(preference);
+      orientationAttempt = attempt;
+      const result = await attempt;
+      if (orientationAttempt === attempt) orientationAttempt = undefined;
       if (!effectActive) return;
       if (result === "unsupported") {
         setOrientationLockUnsupported(true);
@@ -626,7 +636,6 @@ export function useGameViewport(
     const onFullscreenChange = () => {
       if (document.fullscreenElement !== document.documentElement) {
         gameFullscreenOwned = false;
-        gameOrientationLockOwned = false;
       }
       if (document.visibilityState === "visible")
         syncViewportActions(hasEnteredGame ? "restore" : "enter");
@@ -652,19 +661,22 @@ export function useGameViewport(
       document.removeEventListener("fullscreenchange", onFullscreenChange);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       landscapeQuery.removeEventListener("change", onOrientationChange);
-      const retirementGeneration = ++orientationEffectGeneration.current;
-      const pendingAttempt = pendingGameOrientation;
-      void (pendingAttempt ?? Promise.resolve()).then(() => {
-        // React may immediately restart an effect in development or while the
-        // preference changes. Only the latest retired session may tear down
-        // fullscreen; a replacement session keeps using it.
-        if (
-          orientationEffectGeneration.current === retirementGeneration &&
-          generation < retirementGeneration
-        ) {
+      const releaseIfCurrent = () => {
+        if (gameViewportGeneration === viewportGeneration) {
           void releaseGameFullscreen();
         }
-      });
+      };
+      // Let a replacement React effect claim the viewport, then release now.
+      // Native orientation promises may never settle, so they cannot gate exit.
+      void Promise.resolve().then(releaseIfCurrent);
+      // Handle each late result independently: one stuck request must not hide
+      // another request's completed side effect. Shared promises are deduped.
+      const pendingAttempts = new Set([
+        orientationAttempt, pendingGameOrientation, pendingGameFullscreen,
+      ]);
+      for (const attempt of pendingAttempts) {
+        if (attempt) void attempt.then(releaseIfCurrent);
+      }
     };
   }, [active, landscapeCompatibility, preferences?.orientation]);
 

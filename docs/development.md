@@ -54,9 +54,22 @@ state, the room creator, and opaque room-scoped player membership.
 
 ## Verification
 
+`npm run check` runs frontend and Worker type checks, all tests, and the frontend
+build, once each. The steps can also be run independently:
+
+```sh
+npm run typecheck
+npm test
+npm run build:web
+```
+
+Test files matching `tests/*.test.mjs` are discovered automatically. To run a
+single file, use `node --test tests/room-session.test.mjs`.
+`build:web` only builds; `deploy:platform` runs type checks before building and
+deploying. For a complete check including a dry-run deployment:
+
 ```sh
 npm run check
-npm run build:web
 npx wrangler deploy --config apps/worker/wrangler.jsonc --dry-run
 ```
 

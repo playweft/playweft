@@ -8,24 +8,17 @@
     "packages/*"
   ],
   "scripts": {
-    "test:storage": "node --test tests/local-storage.test.mjs",
     "postinstall": "patch-package",
-    "test:live-activity": "node --test tests/live-activity.test.mjs",
-    "test:ai-cancel": "node --test tests/language-model-cancel.test.mjs",
-    "test:room-session": "node --test tests/room-session.test.mjs",
-    "test:game-navigation": "node --test tests/game-navigation.test.mjs",
-    "check": "npm run test:site-config && npm run test:storage && npm run test:live-activity && npm run test:ai-cancel && npm run test:room-session && npm run test:local-host && npm run test:game-navigation && npm run test:game-shelf && npm run test:game-mode && npm run check --workspace @playweft/worker && npm run build:web",
-    "dev:worker": "npm run dev --workspace @playweft/worker --",
     "dev:web": "npm run dev --workspace @playweft/web",
+    "dev:worker": "npm run dev --workspace @playweft/worker --",
     "dev:rps": "npm run dev --workspace @playweft/rps-demo",
     "build:web": "npm run build --workspace @playweft/web && npm run build --workspace @playweft/rps-demo",
     "build:rps": "npm run build --workspace @playweft/rps-demo",
-    "deploy:platform": "npm run build:web && npm run deploy --workspace @playweft/worker",
-    "deploy:worker": "npm run deploy:platform",
-    "test:local-host": "node --test tests/local-host.test.mjs",
-    "test:game-mode": "node --test tests/game-mode.test.mjs",
-    "test:site-config": "node --test tests/site-config.test.mjs",
-    "test:game-shelf": "node --test tests/game-shelf.test.mjs"
+    "typecheck": "npm run check --workspace @playweft/web && npm run check --workspace @playweft/worker",
+    "test": "node --test tests/*.test.mjs",
+    "check": "npm run typecheck && npm test && npm run build:web",
+    "deploy:platform": "npm run typecheck && npm run build:web && npm run deploy --workspace @playweft/worker",
+    "deploy:worker": "npm run deploy:platform"
   },
   "devDependencies": {
     "patch-package": "8.0.1"

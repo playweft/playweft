@@ -75,7 +75,7 @@ when spectating, so their room is not treated as abandoned while they are online
 
 ## Validation
 
-Run `npm run test:room-session` for deterministic lifetime and bridge regression
+Run `node --test tests/room-session.test.mjs` for deterministic lifetime and bridge regression
 tests using actual TypeScript modules, fake sockets and a controllable clock.
 `npm run check` includes those tests, the existing worker activity/AI cancellation
 tests, worker type checking and production builds.

@@ -124,6 +124,9 @@
 }
 
 .shelf-game {
+  display: block;
+  cursor: pointer;
+  user-select: none;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   width: var(--shelf-game-width);

@@ -25,6 +25,7 @@ import {
   type HTMLAttributes,
   type TouchEvent as ReactTouchEvent,
 } from "react";
+import { gameLaunchPath } from "@/features/game/game-launch-link";
 import type { DiscoveredGame } from "@/features/game/game-manifest";
 import { localizeGameName, useI18n } from "@/app/i18n";
 import type { MenuPosition } from "@/components/Menu";
@@ -62,11 +63,17 @@ interface ShelfGameCardProps {
     kind: GameShelfKind,
     position: MenuPosition,
   ): void;
-  onTouchStart?(game: ShelfGame, event: ReactTouchEvent<HTMLButtonElement>): void;
-  onTouchMove?(game: ShelfGame, event: ReactTouchEvent<HTMLButtonElement>): void;
+  onTouchStart?(
+    game: ShelfGame,
+    event: ReactTouchEvent<HTMLAnchorElement>,
+  ): void;
+  onTouchMove?(
+    game: ShelfGame,
+    event: ReactTouchEvent<HTMLAnchorElement>,
+  ): void;
   onTouchEnd?(game: ShelfGame): void;
   onTouchCancel?(game: ShelfGame): void;
-  buttonProps?: HTMLAttributes<HTMLButtonElement>;
+  linkProps?: HTMLAttributes<HTMLAnchorElement>;
   slotProps?: ComponentPropsWithRef<"div">;
 }
 
@@ -108,6 +115,24 @@ export default function GameShelf({
   const [dropTransition, setDropTransition] = useState<DropTransition>();
   const gameNodes = useRef(new Map<string, HTMLDivElement>());
   const touchMenuPress = useRef<TouchMenuPress | undefined>(undefined);
+  const shelf = useRef<HTMLElement | null>(null);
+  const suppressActivation = useRef(false);
+  useEffect(() => {
+    const suppressClick = (event: MouseEvent) => {
+      if (
+        !suppressActivation.current ||
+        !shelf.current?.contains(event.target as Node)
+      )
+        return;
+      suppressActivation.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    // dnd-kit stops clicks at document capture without cancelling a link's
+    // default navigation. Cancel at window capture first, only for this shelf.
+    window.addEventListener("click", suppressClick, true);
+    return () => window.removeEventListener("click", suppressClick, true);
+  }, []);
   const sortable = Boolean(onReorder && games.length > 1);
   const sensors = useSensors(
     useSensor(MouseSensor, {
@@ -140,7 +165,7 @@ export default function GameShelf({
   }, []);
   const startTouchMenu = (
     game: ShelfGame,
-    event: ReactTouchEvent<HTMLButtonElement>,
+    event: ReactTouchEvent<HTMLAnchorElement>,
   ) => {
     const touch = event.touches[0];
     if (!touch) return;
@@ -154,6 +179,7 @@ export default function GameShelf({
     press.timer = window.setTimeout(() => {
       if (touchMenuPress.current !== press) return;
       press.opened = true;
+      suppressActivation.current = true;
       press.timer = undefined;
       onOpenMenu(game, kind, { left: press.x, top: press.y });
     }, TOUCH_MENU_DELAY_MS);
@@ -161,7 +187,7 @@ export default function GameShelf({
   };
   const moveTouchMenu = (
     game: ShelfGame,
-    event: ReactTouchEvent<HTMLButtonElement>,
+    event: ReactTouchEvent<HTMLAnchorElement>,
   ) => {
     const press = touchMenuPress.current;
     const touch = event.touches[0];
@@ -176,7 +202,17 @@ export default function GameShelf({
   };
   useEffect(() => clearTouchMenuPress, []);
   const content = (
-    <section className="game-shelf" aria-labelledby={titleId}>
+    <section
+      className="game-shelf"
+      aria-labelledby={titleId}
+      ref={shelf}
+      onPointerDownCapture={() => {
+        suppressActivation.current = false;
+      }}
+      onKeyDownCapture={() => {
+        suppressActivation.current = false;
+      }}
+    >
       <div className="shelf-heading">
         <h2 id={titleId}>{title}</h2>
       </div>
@@ -214,6 +250,7 @@ export default function GameShelf({
   if (!sortable || !onReorder) return content;
 
   const onDragStart = ({ activatorEvent }: DragStartEvent) => {
+    suppressActivation.current = true;
     if (!("touches" in activatorEvent)) onDismissMenu?.();
   };
 
@@ -229,7 +266,9 @@ export default function GameShelf({
     const fromIndex = games.findIndex((game) => game.manifestId === active.id);
     const toIndex = games.findIndex((game) => game.manifestId === over.id);
     if (fromIndex < 0 || toIndex < 0) return;
-    const rect = gameNodes.current.get(String(active.id))?.getBoundingClientRect();
+    const rect = gameNodes.current
+      .get(String(active.id))
+      ?.getBoundingClientRect();
     if (rect) {
       setDropTransition({
         gameId: String(active.id),
@@ -329,7 +368,7 @@ function SortableShelfGameCard({
           transition: isDropping ? "none" : transition,
         },
       }}
-      buttonProps={{
+      linkProps={{
         ...attributes,
         ...listeners,
       }}
@@ -349,7 +388,7 @@ function ShelfGameCard({
   onTouchMove,
   onTouchEnd,
   onTouchCancel,
-  buttonProps,
+  linkProps,
   slotProps,
 }: ShelfGameCardProps) {
   const { locale } = useI18n();
@@ -361,27 +400,42 @@ function ShelfGameCard({
         if (event.target === event.currentTarget) onAnimationEnd?.();
       }}
     >
-      <button
-        {...buttonProps}
+      <a
+        {...linkProps}
+        href={gameLaunchPath(game.manifestUrl)}
+        role="link"
+        draggable={false}
         className="shelf-game"
         data-favorite-game-id={
           kind === "favorite" ? game.manifestId : undefined
         }
-        onClick={() => onSelect(game)}
+        onClick={(event) => {
+          if (
+            event.defaultPrevented ||
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          )
+            return;
+          event.preventDefault();
+          onSelect(game);
+        }}
         onTouchStart={(event) => {
-          buttonProps?.onTouchStart?.(event);
+          linkProps?.onTouchStart?.(event);
           onTouchStart?.(game, event);
         }}
         onTouchMove={(event) => {
-          buttonProps?.onTouchMove?.(event);
+          linkProps?.onTouchMove?.(event);
           onTouchMove?.(game, event);
         }}
         onTouchEnd={(event) => {
-          buttonProps?.onTouchEnd?.(event);
+          linkProps?.onTouchEnd?.(event);
           onTouchEnd?.(game);
         }}
         onTouchCancel={(event) => {
-          buttonProps?.onTouchCancel?.(event);
+          linkProps?.onTouchCancel?.(event);
           onTouchCancel?.(game);
         }}
         onContextMenu={(event) => {
@@ -402,13 +456,15 @@ function ShelfGameCard({
               referrerPolicy="no-referrer"
             />
           ) : (
-            <span>{localizeGameName(game, locale).slice(0, 2).toUpperCase()}</span>
+            <span>
+              {localizeGameName(game, locale).slice(0, 2).toUpperCase()}
+            </span>
           )}
         </span>
         <span className="shelf-game-name">
           {localizeGameName(game, locale)}
         </span>
-      </button>
+      </a>
     </div>
   );
 }

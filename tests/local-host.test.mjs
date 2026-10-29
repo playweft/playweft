@@ -145,3 +145,25 @@ test('a failed direct pong never silently falls back to relay',async()=>{
   channel.onmessage({data:JSON.stringify({type:'ping',id:'probe'})});
   assert.equal(f.queue.length,0);f.dispose();
 });
+
+test('late spectators receive the current private projection through the browser host', async () => {
+  const f = await fixture('local-host');
+  try {
+    const action = f.g.action('before-spectator', {type: 'choose', choice: 'paper'});
+    f.pump();
+    assert.equal((await action).accepted, true);
+    const next = {...presence, connectionMode: 'local-host', spectators: [...presence.spectators, {id: 'late'}]};
+    for (const room of f.rooms.values()) room.setPresence(next);
+    const late = f.make('late');
+    late.setPresence(next);
+    f.tick();
+    const snapshot = f.snapshots.get('late');
+    assert.ok(snapshot, 'new spectator receives a snapshot without waiting for another move');
+    assert.equal(snapshot.version, f.snapshots.get('g').version);
+    assert.deepEqual(json(snapshot.state.choices), {});
+    assert.deepEqual(json(snapshot.events), []);
+    assert.equal(f.loads.has('late'), false, 'spectator does not load the host runtime');
+  } finally {
+    f.dispose();
+  }
+});

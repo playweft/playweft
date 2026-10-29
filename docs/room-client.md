@@ -31,6 +31,11 @@ are ordered by match ID and version and are discarded outside the playing
 phase. Returning to the lobby clears the snapshot and advances the frame
 revision, so even batched lobby/playing transitions create a fresh iframe.
 
+New arrivals during play join as spectators without changing the starting roster.
+Existing members retain their role and seat when rejoining. The game receives
+the spectator identity and a viewer-specific snapshot; the game controls its
+spectator UI, including whether to display any content.
+
 ## Resource lifetimes
 
 Hosts may spectate in the lobby, retain management permissions, and transfer

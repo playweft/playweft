@@ -504,17 +504,18 @@ export class GameRoom extends DurableObject<Env> {
     const name = this.playerName(request);
     let membershipChanged = false;
     if (!existing) {
-      if (phase === "playing")
-        throw new RoomHttpError(403, "the game has already started");
       const occupiedSeats = new Set(
         Object.values(members)
           .map((member) => member.seat)
           .filter((seat): seat is number => typeof seat === "number"),
       );
-      const seat = Array.from(
-        { length: config.maxPlayers },
-        (_, index) => index + 1,
-      ).find((number) => !occupiedSeats.has(number));
+      // The starting roster stays locked; arrivals during play only spectate.
+      const seat = phase === "lobby"
+        ? Array.from(
+            { length: config.maxPlayers },
+            (_, index) => index + 1,
+          ).find((number) => !occupiedSeats.has(number))
+        : undefined;
       members[playerId] = {
         actorId: await this.actorId(request),
         ...(name ? { name } : {}),

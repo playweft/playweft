@@ -8,7 +8,7 @@ These endpoints are used by the trusted platform client. Games should use the
 | `POST /api/rooms` | Create a random room with `{ manifestUrl }`; room IDs default to 4-character friendly codes. |
 | `GET /api/rooms/:roomId/launch` | Read the exact Manifest URL for the invitation page. |
 | `PUT /api/rooms/:roomId/initialize` | Fetch the same-origin `serverUrl` and atomically install its source with the Manifest identity, player limits and persistence mode; repeating the same configuration is safe. |
-| `POST /api/rooms/:roomId/join` | Join the platform-owned lobby. The room creator is the host; when every seat is taken, new arrivals join as spectators. |
+| `POST /api/rooms/:roomId/join` | Join the room. New arrivals take an available seat in the lobby; when seats are full or the game has started, they join as spectators. Existing members retain their role and seat. |
 | `POST /api/rooms/:roomId/seat` | Choose an empty numbered seat with `{ seat }`, or leave a seat to spectate with `{ seat: null }`. The host can also spectate without losing management permissions. |
 | `POST /api/rooms/:roomId/ready` | Set a seated non-host player's readiness with `{ ready }`. |
 | `POST /api/rooms/:roomId/leave` | Explicitly leave the room; ownership transfers immediately, and the room is deleted when its final member leaves. |

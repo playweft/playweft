@@ -1399,3 +1399,59 @@ test('bad server URLs, failed source fetches and invalid Lua leave no room metad
     assert.equal((await f.request('launch',undefined,'GET')).status,404);
   }
 });
+
+test('lobby arrivals take a free seat or spectate when all seats are occupied', async () => {
+  for (const full of [false, true]) {
+    const f = spectatorHostBackend();
+    if (!full) delete f.stored.get('roomMeta').members.guest;
+    const response = await f.request('join', 'newcomer');
+    assert.equal(response.status, 200);
+    const joined = await response.json();
+    assert.equal(joined.phase, 'lobby');
+    assert.equal(joined.players.some(p => p.id === joined.selfId), !full);
+    assert.equal(joined.spectators.some(p => p.id === joined.selfId), full);
+    if (!full) assert.equal(joined.players.find(p => p.id === joined.selfId).seat, 2);
+  }
+});
+
+test('arrivals during play spectate even with an empty seat and receive a spectator projection', async () => {
+  const f = spectatorHostBackend();
+  assert.equal((await f.request('start')).status, 200);
+  const meta = f.stored.get('roomMeta');
+  delete meta.members.guest;
+  const response = await f.request('join', 'newcomer');
+  assert.equal(response.status, 200);
+  const joined = await response.json();
+  assert.equal(joined.phase, 'playing');
+  assert.ok(joined.spectators.some(p => p.id === joined.selfId));
+  assert.equal(joined.players.length, 1);
+  assert.equal(f.stored.get('roomMeta').members.newcomer.seat, undefined);
+  assert.equal((await f.request('seat', 'newcomer', {seat: 2})).status, 409);
+  const engine = await f.room.engine();
+  engine.view = (_state, _events, context) => {
+    f.seen.viewer = context.viewer;
+    return {state: {watching: context.viewer.role === 'spectator'}, events: []};
+  };
+  f.room.engine = async () => engine;
+  const state = await f.room.fetch(new Request('https://room.example/state', {
+    headers: {'X-Playweft-Player-Id': 'newcomer'},
+  }));
+  assert.equal(state.status, 200);
+  assert.deepEqual((await state.json()).state, {watching: true});
+  assert.equal(f.seen.viewer.id, joined.selfId);
+  assert.equal(f.seen.viewer.role, 'spectator');
+  assert.equal(f.seen.viewer.isOwner, false);
+  assert.equal(f.seen.viewer.seat, undefined);
+});
+
+test('existing players and spectators retain identity and seat when rejoining during play', async () => {
+  const f = spectatorHostBackend();
+  assert.equal((await f.request('start')).status, 200);
+  for (const id of ['host', 'guest', 'observer']) {
+    const before = structuredClone(f.stored.get('roomMeta').members[id]);
+    const response = await f.request('join', id);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).selfId, before.actorId);
+    assert.deepEqual(f.stored.get('roomMeta').members[id], before);
+  }
+});

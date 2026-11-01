@@ -121,6 +121,17 @@ const Menu = forwardRef<MenuHandle, MenuProps>(function Menu(
     });
   }, [anchor, anchorHoverGuard, position]);
 
+  useLayoutEffect(() => {
+    const element = menu.current;
+    const previous = document.activeElement;
+    const back = () => close();
+    element?.addEventListener("gamepadback", back);
+    return () => {
+      element?.removeEventListener("gamepadback", back);
+      if (previous instanceof HTMLElement && previous.isConnected && element?.contains(document.activeElement)) previous.focus();
+    };
+  }, [close]);
+
   useEffect(() => {
     if (autoFocus) {
       const firstAction = menu.current?.querySelector<HTMLButtonElement>(
@@ -181,6 +192,7 @@ const Menu = forwardRef<MenuHandle, MenuProps>(function Menu(
       )}
       <div
         ref={menu}
+        data-gamepad-scope
         className={`menu ${className} ${closing ? "menu-closing" : ""}`}
         role={role}
         aria-label={ariaLabel}

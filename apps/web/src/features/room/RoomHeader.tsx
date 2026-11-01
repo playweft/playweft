@@ -17,6 +17,7 @@ export default function RoomHeader({
     <header className="topbar room-topbar">
       <button
         className="brand room-brand"
+        data-gamepad-back
         onClick={requestBack}
         aria-label={t("backToPlayweftHome")}
       >

@@ -130,6 +130,7 @@ performed. Never commit deployment secrets or local configuration.
 | [Game URLs](docs/game-urls.md) | Launch modes, sharing, and browser history |
 | [Deployment](docs/deployment.md) | Cloudflare deployment, authentication, and room codes |
 | [Local development](docs/development.md) | Development servers, example walkthrough, and verification |
+| [Controller navigation](docs/controller-navigation.md) | Platform gamepad controls and current limitations |
 | [Architecture](docs/architecture.md) | Repository layout, trust boundary, modules, and room cleanup |
 | [HTTP API](docs/http-api.md) | Endpoints used by the trusted platform client |
 

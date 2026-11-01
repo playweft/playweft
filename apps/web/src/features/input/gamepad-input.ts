@@ -10,6 +10,7 @@ const BUTTON_ACTIONS = ["confirm", "back", "context"] as const;
 interface ControllerState {
   id: string;
   buttons: boolean[];
+  guide?: boolean;
   direction?: Direction;
   repeatAt: number;
   chordStarted?: number;
@@ -32,6 +33,8 @@ export class GamepadInput {
       connected.add(pad.index);
       const buttons = BUTTON_ACTIONS.map((_, index) => pressed(pad, index));
       const direction = readDirection(pad);
+      // Some browsers/OSes reserve Guide and never expose button 16.
+      const guide = pad.buttons[16]?.pressed;
       const chord = pressed(pad, 8) && pressed(pad, 9);
       let previous = this.controllers.get(pad.index);
       if (!previous || previous.id !== pad.id) {
@@ -40,11 +43,26 @@ export class GamepadInput {
         previous = {
           id: pad.id,
           buttons,
+          guide,
           direction,
           repeatAt: Infinity,
           chordConsumed: chord,
         };
         this.controllers.set(pad.index, previous);
+        continue;
+      }
+
+      const guidePressed = guide === true && previous.guide === false;
+      previous.guide = guide;
+      if (guide === true) {
+        if (guidePressed) actions.add("menu");
+        // Holding the opening button must not repeat or leak confirm/direction
+        // into the newly opened dialog. A simultaneous chord is consumed too.
+        previous.buttons = buttons;
+        previous.direction = direction;
+        previous.repeatAt = Infinity;
+        previous.chordConsumed = chord;
+        previous.chordStarted = undefined;
         continue;
       }
 

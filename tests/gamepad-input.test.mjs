@@ -114,3 +114,58 @@ test('spatial focus prefers aligned candidates and ignores invalid geometry', ()
   assert.equal(findNextFocus(rects, -1, 'down'), 0);
   assert.equal(findNextFocus([], -1, 'down'), -1);
 });
+
+test('Guide is one menu action per rising edge and suppresses held confirm/direction', () => {
+  const input = new GamepadInput();
+  poll(input, [pad()]);
+  assert.deepEqual(poll(input, [pad({ buttons: [16, 0, 15] })], 1), ['menu']);
+  assert.deepEqual(poll(input, [pad({ buttons: [16, 0, 15] })], 1000), []);
+  assert.deepEqual(poll(input, [pad({ buttons: [0, 15] })], 1001), []);
+  poll(input, [pad()], 1002);
+  assert.deepEqual(poll(input, [pad({ buttons: [16] })], 1003), ['menu']);
+});
+
+test('Guide held on connect, reconnect or reset is not an opening action', () => {
+  const input = new GamepadInput();
+  const held = pad({ buttons: [16] });
+  assert.deepEqual(poll(input, [held]), []);
+  assert.deepEqual(poll(input, [held], 1000), []);
+  poll(input, [pad()], 1001);
+  assert.deepEqual(poll(input, [held], 1002), ['menu']);
+  poll(input, [], 1003);
+  assert.deepEqual(poll(input, [held], 1004), []);
+  input.reset();
+  assert.deepEqual(poll(input, [held], 1005), []);
+});
+
+test('missing or newly exposed Guide is safe and fallback chord still works', () => {
+  const input = new GamepadInput();
+  const withoutGuide = (buttons = []) => { const p = pad({ buttons }); p.buttons.length = 16; return p; };
+  poll(input, [withoutGuide()]);
+  assert.deepEqual(poll(input, [withoutGuide([8, 9])], 10), []);
+  assert.deepEqual(poll(input, [withoutGuide([8, 9])], 510), ['menu']);
+  poll(input, [withoutGuide()], 511);
+  assert.deepEqual(poll(input, [pad({ buttons: [16] })], 512), []);
+  poll(input, [pad()], 513);
+  assert.deepEqual(poll(input, [pad({ buttons: [16] })], 514), ['menu']);
+  assert.deepEqual(poll(input, [pad({ index: 1, mapping: '', buttons: [16] })], 515), []);
+});
+
+test('Guide wins over simultaneous pads and consumes a simultaneous menu chord', () => {
+  const input = new GamepadInput();
+  poll(input, [pad(), pad({ index: 1 })]);
+  assert.deepEqual(poll(input, [pad({ buttons: [0] }), pad({ index: 1, buttons: [16, 8, 9] })], 10), ['menu']);
+  assert.deepEqual(poll(input, [pad({ buttons: [0] }), pad({ index: 1, buttons: [8, 9] })], 600), []);
+  poll(input, [pad(), pad({ index: 1 })], 601);
+  assert.deepEqual(poll(input, [pad(), pad({ index: 1, buttons: [16] })], 602), ['menu']);
+});
+
+test('Guide interrupting a partial chord resets the fallback hold timer', () => {
+  const input = new GamepadInput();
+  poll(input, [pad()]);
+  poll(input, [pad({ buttons: [8, 9] })], 10);
+  assert.deepEqual(poll(input, [pad({ buttons: [16] })], 100), ['menu']);
+  assert.deepEqual(poll(input, [pad({ buttons: [8, 9] })], 600), []);
+  assert.deepEqual(poll(input, [pad({ buttons: [8, 9] })], 1099), []);
+  assert.deepEqual(poll(input, [pad({ buttons: [8, 9] })], 1100), ['menu']);
+});

@@ -94,3 +94,8 @@ test('pointer input hides focus styling and hidden-tab input is not replayed',()
 test('scope closure restores the invoking focus',()=>{
   const f=fixture();const card=new f.Element('a');f.body.append(card);card.focus();f.press(15);const menu=new f.Element('div',{tabIndex:-1,dataset:{gamepadScope:''},className:'menu'});const action=new f.Element();menu.append(action);f.body.append(menu);action.focus();f.tick();menu.isConnected=false;f.body.children=f.body.children.filter(e=>e!==menu);f.document.activeElement=f.body;f.tick();assert.equal(f.document.activeElement,card);
 });
+
+test('central Guide opens the host menu, then dismisses the modal without confirming',()=>{
+  const f=fixture();const frame=new f.Element('iframe',{className:'game-frame',tabIndex:-1});const menu=new f.Element('button',{className:'platform-menu-button'});f.body.append(frame,menu);f.press(16);assert.equal(menu.clicks,1);
+  const dialog=new f.Element('dialog',{open:true,tabIndex:-1});const action=new f.Element();dialog.append(action);f.body.append(dialog);action.focus();let cancels=0;dialog.addEventListener('cancel',()=>cancels++);f.tick();f.pads[0].buttons[16].pressed=true;f.pads[0].buttons[0].pressed=true;f.tick();assert.equal(cancels,1);assert.equal(action.clicks,0);f.tick(1000);assert.equal(cancels,1);assert.equal(action.clicks,0);
+});

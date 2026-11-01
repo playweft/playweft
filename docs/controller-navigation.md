@@ -7,8 +7,12 @@ switching, or change to room-host/game-player permissions.
 - D-pad or left stick moves between controls by their screen positions.
 - Bottom face button (A / Cross) confirms; right (B / Circle) goes back.
 - Left face button (X / Square) opens a focused game's options.
-- Hold Start + Back (Options + Create/Share) together for half a second to open
-  the platform menu while a game runs. Release before pressing another action.
+- Press the central Guide / PS / Xbox button to open the platform menu when the
+  browser exposes it as standard button 16. It triggers once per press, not while
+  held. Some browsers, operating systems, and controllers reserve or omit it.
+- Fallback: hold Start + Back (Options + Create/Share) together for half a second.
+  The onscreen platform-menu button also remains available. Release the opening
+  button(s) before pressing another action.
 - Select controls: confirm to adjust, directions to change, confirm/back to
   finish. Text entry still needs a keyboard/touch input; no virtual keyboard is
   included.
@@ -20,9 +24,11 @@ are merged into one shared action per animation frame. Pointer and keyboard
 input hide the controller focus styling without changing layout.
 
 During gameplay ordinary navigation, confirm, and back are not applied to the
-platform. Only the deliberate menu chord is recognized until a platform dialog
-is open. **This does not pause a third-party game or prevent it from reading the
-same physical controller.** Cross-origin games own their input; a future explicit
+platform. Only the central button or deliberate menu chord is recognized until a
+platform dialog is open. When a dialog is already open, the menu action dismisses
+it just like Back. **This does not pause a third-party game or prevent it from reading the
+same physical controller, nor suppress any OS action assigned to Guide.**
+Cross-origin games own their input; a future explicit
 SDK input-ownership/pause contract is required for that guarantee. No game code
 or iframe security permissions are changed in this first version.
 

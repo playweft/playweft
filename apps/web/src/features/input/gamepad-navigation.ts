@@ -60,7 +60,7 @@ export function startGamepadNavigation(onActivity: (active: boolean) => void): (
     if (scope.matches('[class*="closing"], [data-gamepad-closing="true"]')) return;
     const game = document.querySelector<HTMLIFrameElement>('.game-frame');
     const gate = document.querySelector('.game-orientation-gate');
-    // During gameplay only an intentional Start+Back hold opens the host menu.
+    // During gameplay only Guide (when exposed) or the Start+Back hold opens the host menu.
     // Games may still independently poll controllers; this does not pause them.
     if (game && scope === document.body && !gate) {
       if (action === "menu") {

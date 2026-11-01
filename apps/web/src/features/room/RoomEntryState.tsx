@@ -5,7 +5,7 @@ import type { RoomEntryFailure } from "./room-errors";
 export function RoomEntryLoadingState() {
   const { t } = useI18n();
   return (
-    <main className="room-entry-state">
+    <main className="room-entry-state" data-gamepad-view="room-loading">
       <div
         className="room-entry-state-content"
         role="status"
@@ -26,7 +26,7 @@ export function RoomEntryFailureState({
 }) {
   const { t } = useI18n();
   return (
-    <main className="room-entry-state">
+    <main className="room-entry-state" data-gamepad-view="room-error">
       <div className="room-entry-state-content">
         <span className="room-entry-state-icon" aria-hidden="true">
           <DoorClosed />

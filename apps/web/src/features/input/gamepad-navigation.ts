@@ -28,6 +28,9 @@ export function startGamepadNavigation(onActivity: (active: boolean) => void): (
   let previousFocus: HTMLElement | undefined;
   const returnFocus = new WeakMap<HTMLElement, HTMLElement>();
   let gameWasRunning = false;
+  let previousView: HTMLElement | undefined;
+  let previousViewState: string | undefined;
+  let previousGameFrame: Element | null = null;
 
   const focus = (element: HTMLElement) => {
     element.focus({ preventScroll: true });
@@ -111,6 +114,18 @@ export function startGamepadNavigation(onActivity: (active: boolean) => void): (
     let pads: (Gamepad | null)[];
     try { pads = Array.from(navigator.getGamepads?.() ?? []); } catch { reset(); return; }
     const scope = navigationScope();
+    const view = Array.from(document.querySelectorAll<HTMLElement>('[data-gamepad-view]'))
+      .filter(element => !element.closest('[inert], [hidden], [aria-hidden="true"]') && element.getClientRects().length > 0).at(-1);
+    const gameFrame = document.querySelector('.game-frame');
+    if (scope !== previousScope || view !== previousView || view?.dataset.gamepadView !== previousViewState || gameFrame !== previousGameFrame) {
+      // A new modal/view must never inherit a held movement or confirmation.
+      // Baseline the current buttons; release/repress starts a fresh hold.
+      input.reset();
+      editing = undefined;
+    }
+    previousView = view;
+    previousViewState = view?.dataset.gamepadView;
+    previousGameFrame = gameFrame;
     if (scope !== previousScope) {
       if (scope !== document.body && previousFocus) returnFocus.set(scope, previousFocus);
       const restore = returnFocus.get(previousScope);
@@ -118,13 +133,16 @@ export function startGamepadNavigation(onActivity: (active: boolean) => void): (
       previousScope = scope;
       editing = undefined;
     }
-    const gameRunning = Boolean(document.querySelector('.game-frame'));
+    const gameRunning = Boolean(gameFrame);
     if (active && gameWasRunning && !gameRunning && scope === document.body && lastCard) {
       const card = Array.from(document.querySelectorAll<HTMLElement>('[data-gamepad-focus-id]')).find(element => element.dataset.gamepadFocusId === lastCard && isNavigable(element));
       if (card) focus(card);
     }
     gameWasRunning = gameRunning;
-    const actions = input.poll(pads, time);
+    const focusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    // An explicit library region opts in; short menus and all dialogs stay slow.
+    const accelerate = scope === document.body && !gameRunning && Boolean(focusedElement?.closest('[data-gamepad-library]'));
+    const actions = input.poll(pads, time, accelerate);
     for (const action of actions) {
       setActive(true);
       act(action);

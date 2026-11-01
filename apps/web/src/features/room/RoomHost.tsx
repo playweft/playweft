@@ -85,7 +85,7 @@ export default function RoomHost(props: RoomHostProps) {
     return <RoomEntryLoadingState />;
 
   return (
-    <div className={`room-shell ${gameViewActive ? "room-playing" : ""}`}>
+    <div className={`room-shell ${gameViewActive ? "room-playing" : ""}`} data-gamepad-view={`room:${controls.phase}`}>
       {!gameViewActive && (
         <RoomHeader
           gameName={controls.gameName}

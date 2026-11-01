@@ -12,7 +12,7 @@ const { GamepadInput, findNextFocus } = module.exports;
 function pad({ index = 0, id = 'pad', buttons = [], axes = [0, 0], mapping = 'standard', connected = true } = {}) {
   return { index, id, mapping, connected, axes, buttons: Array.from({ length: 17 }, (_, index) => ({ pressed: buttons.includes(index) })) };
 }
-const poll = (input, pads, now = 0) => Array.from(input.poll(pads, now));
+const poll = (input, pads, now = 0, accelerate = false) => Array.from(input.poll(pads, now, accelerate));
 
 test('new devices and reconnects do not activate held controls', () => {
   const input = new GamepadInput();
@@ -168,4 +168,120 @@ test('Guide interrupting a partial chord resets the fallback hold timer', () => 
   assert.deepEqual(poll(input, [pad({ buttons: [8, 9] })], 600), []);
   assert.deepEqual(poll(input, [pad({ buttons: [8, 9] })], 1099), []);
   assert.deepEqual(poll(input, [pad({ buttons: [8, 9] })], 1100), ['menu']);
+});
+
+test('optional acceleration schedules 120/80/60 ms intervals with a 60 ms cap', () => {
+  const input = new GamepadInput();
+  const right = pad({ buttons: [15] });
+  poll(input, [pad()], 0, true);
+  assert.deepEqual(poll(input, [right], 10, true), ['right']);
+  assert.deepEqual(poll(input, [right], 409, true), []);
+  assert.deepEqual(poll(input, [right], 410, true), ['right']);
+  // Each repeat selects its next interval from the hold duration at that step.
+  assert.deepEqual(poll(input, [right], 1490, true), ['right']);
+  assert.deepEqual(poll(input, [right], 1609, true), []);
+  assert.deepEqual(poll(input, [right], 1610, true), ['right']);
+  assert.deepEqual(poll(input, [right], 1689, true), []);
+  assert.deepEqual(poll(input, [right], 1690, true), ['right']);
+  assert.deepEqual(poll(input, [right], 3010, true), ['right']);
+  assert.deepEqual(poll(input, [right], 3069, true), []);
+  assert.deepEqual(poll(input, [right], 3070, true), ['right']);
+  assert.deepEqual(poll(input, [right], 100000, true), ['right']);
+  assert.deepEqual(poll(input, [right], 100001, true), []);
+  assert.deepEqual(poll(input, [right], 100059, true), []);
+  assert.deepEqual(poll(input, [right], 100060, true), ['right']);
+});
+
+test('acceleration thresholds include exactly 1500 and 3000 ms', () => {
+  for (const [duration, interval] of [[1499, 120], [1500, 80], [2999, 80], [3000, 60]]) {
+    const input = new GamepadInput();
+    const right = pad({ buttons: [15] });
+    poll(input, [pad()], 0, true);
+    poll(input, [right], 1, true);
+    assert.deepEqual(poll(input, [right], 1 + duration, true), ['right']);
+    assert.deepEqual(poll(input, [right], duration + interval, true), []);
+    assert.deepEqual(poll(input, [right], 1 + duration + interval, true), ['right']);
+  }
+});
+
+test('disabled acceleration stays at 120 ms even for a long hold', () => {
+  const input = new GamepadInput();
+  const right = pad({ buttons: [15] });
+  poll(input, [pad()]);
+  poll(input, [right], 1);
+  assert.deepEqual(poll(input, [right], 5000), ['right']);
+  assert.deepEqual(poll(input, [right], 5119), []);
+  assert.deepEqual(poll(input, [right], 5120), ['right']);
+});
+
+test('direction change and release restart the acceleration and initial delay', () => {
+  const input = new GamepadInput();
+  const right = pad({ buttons: [15] });
+  const left = pad({ buttons: [14] });
+  poll(input, [pad()], 0, true);
+  poll(input, [right], 1, true);
+  poll(input, [right], 5000, true);
+  assert.deepEqual(poll(input, [left], 5001, true), ['left']);
+  assert.deepEqual(poll(input, [left], 5400, true), []);
+  assert.deepEqual(poll(input, [left], 5401, true), ['left']);
+  assert.deepEqual(poll(input, [left], 5520, true), []);
+  assert.deepEqual(poll(input, [left], 5521, true), ['left']);
+  poll(input, [pad()], 9000, true);
+  assert.deepEqual(poll(input, [left], 9001, true), ['left']);
+  assert.deepEqual(poll(input, [left], 9400, true), []);
+  assert.deepEqual(poll(input, [left], 9401, true), ['left']);
+});
+
+test('changing acceleration scope restarts delay without an extra navigation step', () => {
+  const input = new GamepadInput();
+  const right = pad({ buttons: [15] });
+  poll(input, [pad()], 0, true);
+  poll(input, [right], 1, true);
+  poll(input, [right], 5000, true);
+  assert.deepEqual(poll(input, [right], 5060, false), []);
+  assert.deepEqual(poll(input, [right], 5459, false), []);
+  assert.deepEqual(poll(input, [right], 5460, false), ['right']);
+  assert.deepEqual(poll(input, [right], 5579, false), []);
+  assert.deepEqual(poll(input, [right], 5580, false), ['right']);
+  assert.deepEqual(poll(input, [right], 6000, true), []);
+  assert.deepEqual(poll(input, [right], 6399, true), []);
+  assert.deepEqual(poll(input, [right], 6400, true), ['right']);
+  assert.deepEqual(poll(input, [right], 6519, true), []);
+  assert.deepEqual(poll(input, [right], 6520, true), ['right']);
+});
+
+test('reset, Guide and chord do not resume accelerated held directions', () => {
+  for (const openingButtons of [[16], [8, 9]]) {
+    const input = new GamepadInput();
+    const right = pad({ buttons: [15] });
+    poll(input, [pad()], 0, true);
+    poll(input, [right], 1, true);
+    poll(input, [right], 5000, true);
+    poll(input, [pad({ buttons: [15, ...openingButtons] })], 5001, true);
+    poll(input, [pad({ buttons: [15, ...openingButtons] })], 5501, true);
+    assert.deepEqual(poll(input, [right], 6000, false), []);
+    assert.deepEqual(poll(input, [right], 10000, true), []);
+    poll(input, [pad()], 10001, true);
+    assert.deepEqual(poll(input, [right], 10002, true), ['right']);
+    assert.deepEqual(poll(input, [right], 10401, true), []);
+    assert.deepEqual(poll(input, [right], 10402, true), ['right']);
+    input.reset();
+    assert.deepEqual(poll(input, [right], 20000, true), []);
+    assert.deepEqual(poll(input, [right], 30000, false), []);
+  }
+});
+
+test('each controller accelerates independently, and menu clears other pads holds', () => {
+  const input = new GamepadInput();
+  const one = pad({ buttons: [15] });
+  const two = pad({ index: 1, buttons: [13] });
+  poll(input, [pad(), pad({ index: 1 })], 0, true);
+  poll(input, [one, pad({ index: 1 })], 1, true);
+  poll(input, [one, two], 3001, true);
+  assert.deepEqual(poll(input, [one, two], 3061, true), ['right']);
+  assert.deepEqual(poll(input, [one, two], 3401, true), ['right', 'down']);
+  assert.deepEqual(poll(input, [one, two], 3461, true), ['right']);
+  assert.deepEqual(poll(input, [one, two], 3521, true), ['right', 'down']);
+  assert.deepEqual(poll(input, [one, pad({ index: 1, buttons: [16, 13] })], 3522, true), ['menu']);
+  assert.deepEqual(poll(input, [one, two], 10000, false), []);
 });

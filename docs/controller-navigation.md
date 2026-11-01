@@ -19,7 +19,14 @@ switching, or change to room-host/game-player permissions.
 
 Held buttons are not replayed on connection or on returning from a hidden tab.
 The first input acquires focus if nothing is selected. Sticks have a 0.55 deadzone;
-direction repeats after 400 ms and then every 120 ms. Simultaneous controllers
+direction repeats after 400 ms. In the explicitly marked library shelf region,
+repeats start at 120 ms, become 80 ms after 1.5 seconds continuously held, and
+reach a 60 ms minimum after 3 seconds. D-pad and left stick share this curve;
+pushing farther does not alter it. Menus, dialogs, and other controls stay at
+120 ms. Each controller tracks its own hold duration. Release, direction change,
+or leaving/entering the acceleration region restarts the timing. New scopes,
+modals, or views baseline held controls and require release/repress rather than
+carrying input onto another screen. Simultaneous controllers
 are merged into one shared action per animation frame. Pointer and keyboard
 input hide the controller focus styling without changing layout.
 

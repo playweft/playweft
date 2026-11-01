@@ -23,6 +23,8 @@ function fixture() {
       if(s==='[class*="backdrop"]')return this.className.includes('backdrop');
       if(s==='[class*="closing"]')return this.className.includes('closing');
       if(s==='[data-gamepad-closing="true"]')return this.dataset.gamepadClosing==='true';
+      if(s==='[data-gamepad-library]')return 'gamepadLibrary' in this.dataset;
+      if(s==='[data-gamepad-view]')return 'gamepadView' in this.dataset;
       if(s==='[data-gamepad-scope]')return 'gamepadScope' in this.dataset;
       if(s==='[data-gamepad-back]')return 'gamepadBack' in this.dataset;
       if(s==='[data-gamepad-context]')return 'gamepadContext' in this.dataset;
@@ -68,25 +70,25 @@ test('first press focuses without activation; shared pads then confirm the same 
   f.pads.push({...f.pads[0],id:'pad2',index:1,buttons:Array.from({length:17},()=>({pressed:false}))});f.tick();f.press(0,1);assert.equal(a.clicks,1);f.stop();
 });
 test('modal back dispatches cancel, never invokes background back or confirm',()=>{
-  const f=fixture();const background=new f.Element('button',{dataset:{gamepadBack:''}});const dialog=new f.Element('dialog',{open:true,tabIndex:-1});const action=new f.Element();dialog.append(action);f.body.append(background,dialog);let cancels=0;dialog.addEventListener('cancel',()=>cancels++);action.focus();f.press(1);assert.equal(cancels,1);assert.equal(background.clicks,0);assert.equal(action.clicks,0);
+  const f=fixture();const background=new f.Element('button',{dataset:{gamepadBack:''}});const dialog=new f.Element('dialog',{open:true,tabIndex:-1});const action=new f.Element();dialog.append(action);f.body.append(background,dialog);let cancels=0;dialog.addEventListener('cancel',()=>cancels++);action.focus();f.tick();f.press(1);assert.equal(cancels,1);assert.equal(background.clicks,0);assert.equal(action.clicks,0);
 });
 test('loading scope blocks background and exposes only cancel',()=>{
-  const f=fixture();const background=new f.Element();const scope=new f.Element('div',{tabIndex:-1,dataset:{gamepadScope:''}});const cancel=new f.Element('button',{dataset:{gamepadBack:''}});scope.append(cancel);f.body.append(background,scope);background.focus();f.press(0);assert.equal(f.document.activeElement,cancel);assert.equal(background.clicks,0);f.press(1);assert.equal(cancel.clicks,1);
+  const f=fixture();const background=new f.Element();const scope=new f.Element('div',{tabIndex:-1,dataset:{gamepadScope:''}});const cancel=new f.Element('button',{dataset:{gamepadBack:''}});scope.append(cancel);f.body.append(background,scope);background.focus();f.tick();f.press(0);assert.equal(f.document.activeElement,cancel);assert.equal(background.clicks,0);f.press(1);assert.equal(cancel.clicks,1);
   cancel.isConnected=false;f.press(0);assert.equal(background.clicks,0);
 });
 test('closing dialog rejects another controller confirmation',()=>{
-  const f=fixture();const dialog=new f.Element('dialog',{open:true,tabIndex:-1,dataset:{gamepadClosing:'true'}});const action=new f.Element();dialog.append(action);f.body.append(dialog);action.focus();f.press(0);assert.equal(action.clicks,0);
+  const f=fixture();const dialog=new f.Element('dialog',{open:true,tabIndex:-1,dataset:{gamepadClosing:'true'}});const action=new f.Element();dialog.append(action);f.body.append(dialog);action.focus();f.tick();f.press(0);assert.equal(action.clicks,0);
 });
 test('context action uses the card context menu and menu back stays scoped',()=>{
   const f=fixture();const card=new f.Element('a',{dataset:{gamepadContext:''}});f.body.append(card);card.focus();let contexts=0;card.addEventListener('contextmenu',()=>contexts++);f.press(2);assert.equal(contexts,1);
-  const menu=new f.Element('div',{tabIndex:-1,dataset:{gamepadScope:''},className:'menu'});f.body.append(menu);let backs=0;menu.addEventListener('gamepadback',()=>backs++);f.press(1);assert.equal(backs,1);
+  const menu=new f.Element('div',{tabIndex:-1,dataset:{gamepadScope:''},className:'menu'});f.body.append(menu);let backs=0;menu.addEventListener('gamepadback',()=>backs++);f.tick();f.press(1);assert.equal(backs,1);
 });
 test('game consumes ordinary input; only held chord opens host menu once',()=>{
   const f=fixture();const frame=new f.Element('iframe',{className:'game-frame',tabIndex:-1});const menu=new f.Element('button',{className:'platform-menu-button'});f.body.append(frame,menu);menu.focus();f.press(0);f.press(1);f.press(15);assert.equal(menu.clicks,0);
   f.pads[0].buttons[8].pressed=true;f.pads[0].buttons[9].pressed=true;f.tick();f.tick(500);assert.equal(menu.clicks,1);f.tick(1000);assert.equal(menu.clicks,1);
 });
 test('select editing changes value; first back finishes editing, second closes dialog',()=>{
-  const f=fixture();const dialog=new f.Element('dialog',{open:true,tabIndex:-1});const select=new f.Select();dialog.append(select);f.body.append(dialog);select.focus();let changes=0,cancels=0;select.addEventListener('change',()=>changes++);dialog.addEventListener('cancel',()=>cancels++);f.press(0);f.press(13);assert.equal(select.selectedIndex,1);assert.equal(changes,1);f.press(1);assert.equal(cancels,0);f.press(1);assert.equal(cancels,1);
+  const f=fixture();const dialog=new f.Element('dialog',{open:true,tabIndex:-1});const select=new f.Select();dialog.append(select);f.body.append(dialog);select.focus();f.tick();let changes=0,cancels=0;select.addEventListener('change',()=>changes++);dialog.addEventListener('cancel',()=>cancels++);f.press(0);f.press(13);assert.equal(select.selectedIndex,1);assert.equal(changes,1);f.press(1);assert.equal(cancels,0);f.press(1);assert.equal(cancels,1);
 });
 test('pointer input hides focus styling and hidden-tab input is not replayed',()=>{
   const f=fixture();const a=new f.Element();f.body.append(a);a.focus();f.press(0);assert.equal(a.clicks,1);f.listeners.get('pointerdown')();assert.deepEqual(f.activity,[true,false]);f.setVisible(false);f.pads[0].buttons[0].pressed=true;f.tick();f.setVisible(true);f.tick();assert.equal(a.clicks,1);f.pads[0].buttons[0].pressed=false;f.tick();f.press(0);assert.equal(a.clicks,2);
@@ -96,6 +98,34 @@ test('scope closure restores the invoking focus',()=>{
 });
 
 test('central Guide opens the host menu, then dismisses the modal without confirming',()=>{
-  const f=fixture();const frame=new f.Element('iframe',{className:'game-frame',tabIndex:-1});const menu=new f.Element('button',{className:'platform-menu-button'});f.body.append(frame,menu);f.press(16);assert.equal(menu.clicks,1);
+  const f=fixture();const frame=new f.Element('iframe',{className:'game-frame',tabIndex:-1});const menu=new f.Element('button',{className:'platform-menu-button'});f.body.append(frame,menu);f.tick();f.press(16);assert.equal(menu.clicks,1);
   const dialog=new f.Element('dialog',{open:true,tabIndex:-1});const action=new f.Element();dialog.append(action);f.body.append(dialog);action.focus();let cancels=0;dialog.addEventListener('cancel',()=>cancels++);f.tick();f.pads[0].buttons[16].pressed=true;f.pads[0].buttons[0].pressed=true;f.tick();assert.equal(cancels,1);assert.equal(action.clicks,0);f.tick(1000);assert.equal(cancels,1);assert.equal(action.clicks,0);
+});
+
+function navigationRow(f, {library=false, modal=false, menu=false}={}) {
+  const root=new f.Element(modal?'dialog':'div',{open:modal,tabIndex:-1,dataset:{...(library?{gamepadLibrary:''}:{}),...(menu?{gamepadScope:''}:{}),gamepadView:'test'}});
+  const buttons=Array.from({length:100},(_,i)=>new f.Element('button',{rect:{left:i*60,top:0,right:i*60+40,bottom:40,width:40,height:40}}));
+  root.append(...buttons);f.body.append(root);buttons[0].focus();f.tick();return {root,buttons};
+}
+
+test('only explicit library focus accelerates; dialogs and menus stay at normal speed',()=>{
+  const run=(options)=>{const f=fixture();const {buttons}=navigationRow(f,options);f.pads[0].buttons[15].pressed=true;f.tick();for(let i=0;i<175;i++)f.tick(20);return buttons.indexOf(f.document.activeElement);};
+  const normal=run({});assert.ok(normal>20);assert.ok(run({library:true})>normal);
+  assert.equal(run({library:true,modal:true}),normal);
+  assert.equal(run({library:true,menu:true}),normal);
+});
+
+test('opening and closing a modal baselines held input instead of carrying fast repeats',()=>{
+  const f=fixture();const {buttons}=navigationRow(f,{library:true});f.pads[0].buttons[15].pressed=true;f.tick();for(let i=0;i<175;i++)f.tick(20);
+  const dialog=new f.Element('dialog',{open:true,tabIndex:-1});const first=new f.Element();const second=new f.Element('button',{rect:{left:60,top:0,right:100,bottom:40,width:40,height:40}});dialog.append(first,second);f.body.append(dialog);first.focus();f.tick();f.tick(1000);assert.equal(f.document.activeElement,first);
+  f.pads[0].buttons[15].pressed=false;f.tick();f.press(15);assert.equal(f.document.activeElement,second);
+  // Start another hold, then remove the modal while the stick stays pushed.
+  f.pads[0].buttons[15].pressed=true;f.tick();dialog.isConnected=false;f.body.children=f.body.children.filter(e=>e!==dialog);buttons[0].focus();f.tick();const restored=f.document.activeElement;f.tick(1000);assert.equal(f.document.activeElement,restored);
+});
+
+test('view replacement and state transitions discard held confirmation and movement',()=>{
+  const f=fixture();const {root,buttons}=navigationRow(f,{library:true});f.pads[0].buttons[15].pressed=true;f.tick();for(let i=0;i<175;i++)f.tick(20);
+  root.dataset.gamepadView='next-screen';buttons[0].focus();f.pads[0].buttons[0].pressed=true;f.tick();f.tick(1000);assert.equal(f.document.activeElement,buttons[0]);assert.equal(buttons[0].clicks,0);
+  root.isConnected=false;f.body.children=[];const next=navigationRow(f,{library:true});f.tick(1000);assert.equal(f.document.activeElement,next.buttons[0]);assert.equal(next.buttons[0].clicks,0);
+  f.pads[0].buttons[0].pressed=false;f.pads[0].buttons[15].pressed=false;f.tick();f.press(0);assert.equal(next.buttons[0].clicks,1);
 });

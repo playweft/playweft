@@ -13,6 +13,8 @@ interface ControllerState {
   guide?: boolean;
   direction?: Direction;
   repeatAt: number;
+  heldSince?: number;
+  accelerate: boolean;
   chordStarted?: number;
   chordConsumed: boolean;
 }
@@ -25,7 +27,7 @@ export class GamepadInput {
     this.controllers.clear();
   }
 
-  poll(pads: readonly (Gamepad | null)[], now: number): GamepadAction[] {
+  poll(pads: readonly (Gamepad | null)[], now: number, accelerate = false): GamepadAction[] {
     const actions = new Set<GamepadAction>();
     const connected = new Set<number>();
     for (const pad of pads) {
@@ -46,10 +48,21 @@ export class GamepadInput {
           guide,
           direction,
           repeatAt: Infinity,
+          accelerate,
           chordConsumed: chord,
         };
         this.controllers.set(pad.index, previous);
         continue;
+      }
+
+      if (previous.accelerate !== accelerate) {
+        previous.accelerate = accelerate;
+        // Scope changes restart the delay, not the direction action. Preserve
+        // the release requirement after connecting or opening a platform menu.
+        if (previous.heldSince !== undefined && Number.isFinite(previous.repeatAt)) {
+          previous.heldSince = now;
+          previous.repeatAt = now + REPEAT_DELAY;
+        }
       }
 
       const guidePressed = guide === true && previous.guide === false;
@@ -61,6 +74,7 @@ export class GamepadInput {
         previous.buttons = buttons;
         previous.direction = direction;
         previous.repeatAt = Infinity;
+        previous.heldSince = undefined;
         previous.chordConsumed = chord;
         previous.chordStarted = undefined;
         continue;
@@ -78,6 +92,7 @@ export class GamepadInput {
         previous.buttons = buttons;
         previous.direction = direction;
         previous.repeatAt = Infinity;
+        previous.heldSince = undefined;
         continue;
       }
       previous.chordStarted = undefined;
@@ -88,11 +103,15 @@ export class GamepadInput {
       });
       if (direction !== previous.direction) {
         if (direction) actions.add(direction);
-        previous.repeatAt = now + REPEAT_DELAY;
+        previous.heldSince = direction ? now : undefined;
+        previous.repeatAt = direction ? now + REPEAT_DELAY : Infinity;
       } else if (direction && now >= previous.repeatAt) {
         actions.add(direction);
         // At most one repeat per animation frame; never catch up after a stall.
-        previous.repeatAt = now + REPEAT_INTERVAL;
+        const held = previous.heldSince === undefined ? 0 : now - previous.heldSince;
+        const interval = accelerate && held >= 3000 ? 60
+          : accelerate && held >= 1500 ? 80 : REPEAT_INTERVAL;
+        previous.repeatAt = now + interval;
       }
       previous.buttons = buttons;
       previous.direction = direction;
@@ -101,7 +120,14 @@ export class GamepadInput {
       if (!connected.has(index)) this.controllers.delete(index);
     }
     // Opening the platform menu must not also activate an item in that frame.
-    return actions.has("menu") ? ["menu"] : [...actions];
+    if (actions.has("menu")) {
+      for (const state of this.controllers.values()) {
+        state.heldSince = undefined;
+        state.repeatAt = Infinity;
+      }
+      return ["menu"];
+    }
+    return [...actions];
   }
 }
 

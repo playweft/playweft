@@ -38,6 +38,7 @@ export default function GameViewport({
     <>
       <div
         className={`game-viewport-stage${landscapeCompatibilityRotation ? " game-viewport-stage-landscape-compatibility" : ""}`}
+        data-gamepad-view="game"
         style={stageStyle}
       >
         {children}

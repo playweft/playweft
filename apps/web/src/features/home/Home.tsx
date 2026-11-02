@@ -363,11 +363,11 @@ export default function Home({
           onNicknameChange={onNicknameChange}
         />
       </header>
-      <main className="home">
+      <main className="home" data-gamepad-view="home">
         <h1 className="sr-only">{t("playGamesTogether")}</h1>
 
         {!suppressGameShelves && (
-          <div className="game-shelves">
+          <div className="game-shelves" data-gamepad-library>
             <SiteBanners />
             {renderedFavoriteGames.length > 0 && (
               <GameShelf

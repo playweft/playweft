@@ -406,6 +406,8 @@ function ShelfGameCard({
         role="link"
         draggable={false}
         className="shelf-game"
+        data-gamepad-context
+        data-gamepad-focus-id={`${kind}:${game.manifestId}`}
         data-favorite-game-id={
           kind === "favorite" ? game.manifestId : undefined
         }

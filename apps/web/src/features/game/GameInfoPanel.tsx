@@ -155,6 +155,7 @@ export default function GameInfoPanel({
   return (
     <dialog
       ref={dialog}
+      data-gamepad-closing={closing ? "true" : undefined}
       className={`game-info-layer${landscapeCompatibilityRotation ? " game-info-layer-landscape-compatibility" : ""}`}
       style={
         landscapeCompatibilityRotation

@@ -11,13 +11,13 @@ export default function EntryOverlay({
 }: EntryOverlayProps) {
   const { t } = useI18n();
   return (
-    <div className="creating-overlay">
+    <div className="creating-overlay" data-gamepad-scope>
       <div className="creating-status" role="status" aria-live="polite">
         <span className="loading-spinner" aria-hidden="true" />
         <span>{status}</span>
       </div>
       {onCancel && (
-        <button className="creating-cancel" type="button" onClick={onCancel}>
+        <button data-gamepad-back className="creating-cancel" type="button" onClick={onCancel}>
           {t("cancel")}
         </button>
       )}

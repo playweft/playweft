@@ -1,14 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { ChevronLeft, Search } from "lucide-react";
 import { useI18n } from "@/app/i18n";
 
-interface MobileSearchProps {
-  value: string;
-  onChange(value: string): void;
-  onSubmit(): void;
+export interface SearchDialogHandle {
+  open(source?: HTMLElement): void;
+  close(): void;
 }
 
-export default function MobileSearch({ value, onChange, onSubmit }: MobileSearchProps) {
+interface MobileSearchProps {
+  ref?: Ref<SearchDialogHandle>;
+  children?: ReactNode;
+  value: string;
+  onChange(value: string): void;
+  onSubmit(): boolean;
+}
+
+export default function MobileSearch({ ref, children, value, onChange, onSubmit }: MobileSearchProps) {
   const { t } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -35,24 +42,20 @@ export default function MobileSearch({ value, onChange, onSubmit }: MobileSearch
   };
 
   useEffect(() => {
-    const desktop = window.matchMedia("(min-width: 621px)");
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const finishPlaceholder = () => {
       if (motion.matches && dialog.current?.open && closeTimer.current === undefined) setExpandedPlaceholder(true);
     };
-    const closeOnDesktop = () => { if (desktop.matches) finishClose(); };
-    desktop.addEventListener("change", closeOnDesktop);
     motion.addEventListener("change", finishPlaceholder);
     return () => {
-      desktop.removeEventListener("change", closeOnDesktop);
       motion.removeEventListener("change", finishPlaceholder);
       window.clearTimeout(closeTimer.current);
     };
   }, []);
 
-  const open = () => {
+  const open = (from?: HTMLElement) => {
     const element = dialog.current;
-    const source = trigger.current;
+    const source = from ?? trigger.current;
     if (!element || !source || element.open) return;
     const bounds = source.getBoundingClientRect();
     element.style.setProperty("--search-from-width", `${bounds.width}px`);
@@ -63,10 +66,12 @@ export default function MobileSearch({ value, onChange, onSubmit }: MobileSearch
     input.current?.focus({ preventScroll: true });
   };
 
+  useImperativeHandle(ref, () => ({ open, close: finishClose }));
+
   return (
     <>
       <button ref={trigger} type="button" className="mobile-search-trigger"
-        aria-label={t("openGameOrRoom")} aria-haspopup="dialog" onClick={open}>
+        aria-label={t("openGameOrRoom")} aria-haspopup="dialog" onClick={() => open()}>
         <Search size={18} aria-hidden="true" />
         <span>{t("search")}</span>
       </button>
@@ -80,8 +85,7 @@ export default function MobileSearch({ value, onChange, onSubmit }: MobileSearch
         <header className="mobile-search-header">
           <form className="launch-form mobile-search-form" onSubmit={event => {
             event.preventDefault();
-            finishClose();
-            onSubmit();
+            if (onSubmit()) finishClose();
           }}>
             <label className="sr-only" htmlFor="mobile-game-url">{t("gameUrlOrRoomCode")}</label>
             <div className="url-input mobile-search-field" onAnimationEnd={event => {
@@ -101,6 +105,7 @@ export default function MobileSearch({ value, onChange, onSubmit }: MobileSearch
             </button>
           </form>
         </header>
+        <div className="mobile-search-content">{children}</div>
       </dialog>
     </>
   );

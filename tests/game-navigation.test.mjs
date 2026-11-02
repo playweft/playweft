@@ -81,7 +81,7 @@ function fixture(initial = "/", selectedGame = game, overrides = {}) {
   }, window);
   const common = {
     "react/jsx-runtime": { jsx, jsxs: jsx },
-    "@/app/i18n": { useI18n: () => ({ locale: "en", t: key => key }) },
+    "@/app/i18n": { useI18n: () => ({ locale: "en", t: key => key }), localizeGameName: game => game.name },
     "@/features/game/game-launch-link": links,
     "@/features/room/room-code": { roomIdFromInput: value => value.trim().toUpperCase() === "FZCC" ? "FZCC" : undefined },
     "@/features/library/recent-games": { readRecentGames: () => [], persistRecentGames: () => [], saveRecentGame() {} },
@@ -424,4 +424,35 @@ test("direct games return from API-created rooms without adding a solo override,
     assert.equal(page.window.location.search,'?game=game.example/demo/');
     assert.equal(page.history.length,2);page.dispose();
   }
+});
+
+
+test('plain search filters recommended names without probing or navigating, and keeps the dialog open', async () => {
+  let probes = 0;
+  const f = fixture('/', game, {probeGame: async () => { probes++; return game; }});
+  await f.settle();
+  find(f.home, 'MobileSearch').props.onChange('  eM  '); await f.settle();
+  assert.equal(find(f.home, 'MobileSearch').props.onSubmit(), false);
+  await f.settle();
+  const results = find(find(f.home, 'MobileSearch'), 'ul');
+  assert.ok(results);
+  assert.equal(find(results, 'a').props.href, f.links.gameLaunchPath(game.manifestUrl));
+  assert.equal(probes, 0);
+  assert.equal(f.window.location.search, '');
+  find(results, 'a').props.onClick({button: 0, preventDefault() {}});
+  await f.settle();
+  assert.ok(find(f.home, 'LaunchChoiceDialog'));
+  f.dispose();
+});
+
+test('search matches translated names and displays an empty state for no matches', async () => {
+  const f = fixture('/', {...game, translations: {'zh-CN': {name: '围棋对弈'}}});
+  await f.settle();
+  find(f.home, 'MobileSearch').props.onChange('围棋'); await f.settle();
+  assert.ok(find(find(f.home, 'MobileSearch'), 'ul'));
+  find(f.home, 'MobileSearch').props.onChange('不存在的游戏'); await f.settle();
+  const search = find(f.home, 'MobileSearch');
+  assert.equal(find(search, 'ul'), undefined);
+  assert.equal(find(search, 'p').props.children, 'noSearchResults');
+  f.dispose();
 });

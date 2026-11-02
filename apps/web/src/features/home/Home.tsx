@@ -1,7 +1,7 @@
 import SiteBanners from "./SiteBanners";
-import MobileSearch from "./MobileSearch";
+import MobileSearch, { type SearchDialogHandle } from "./MobileSearch";
 import { Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createGuestSession } from "@/platform/platform-api";
 import { useFeaturedGames } from "@/features/library/featured-games";
 import ErrorToast from "@/components/ErrorToast";
@@ -74,6 +74,8 @@ export default function Home({
 }: HomeProps) {
   const { locale, t } = useI18n();
   const [gameUrl, setGameUrl] = useState("");
+  const searchDialog = useRef<SearchDialogHandle>(null);
+  const desktopSearch = useRef<HTMLFormElement>(null);
   const [recentGames, setRecentGames] = useState(readRecentGames);
   const [renderedRecentGames, setRenderedRecentGames] = useState(recentGames);
   const [recentGamePhases, setRecentGamePhases] = useState<
@@ -86,6 +88,21 @@ export default function Home({
     Record<string, ShelfGamePhase>
   >({});
   const featuredGames = useFeaturedGames(!suppressGameShelves);
+  const searchInput = parseLaunchInput(gameUrl);
+  const searchQuery = searchInput.kind === "search" ? searchInput.query.toLocaleLowerCase() : "";
+  const searchResults = searchQuery ? featuredGames.filter((game) =>
+    [game.name, ...Object.values(game.translations ?? {}).map((value) => value.name ?? "")]
+      .some((name) => name.toLocaleLowerCase().includes(searchQuery)),
+  ) : [];
+  const submitSearch = () => {
+    if (parseLaunchInput(gameUrl).kind === "search") {
+      setError(undefined);
+      setUnsupportedGame(undefined);
+      return false;
+    }
+    void launchFromValue(gameUrl);
+    return true;
+  };
   const [error, setError] = useState<string>();
   const [gameMenu, setGameMenu] = useState<{
     game: ShelfGame;
@@ -191,6 +208,7 @@ export default function Home({
     const trimmed = value.trim();
     if (!fromRoute) {
       const input = parseLaunchInput(trimmed);
+      if (input.kind === "search") return;
       if (input.kind === "room") {
         void joinRoomById(input.roomId);
         return;
@@ -331,10 +349,11 @@ export default function Home({
           <span>playweft</span>
         </a>
         <form
+          ref={desktopSearch}
           className="launch-form"
           onSubmit={(event) => {
             event.preventDefault();
-            void launchFromValue(gameUrl);
+            if (!submitSearch()) searchDialog.current?.open(desktopSearch.current ?? undefined);
           }}
         >
           <label className="sr-only" htmlFor="game-url">
@@ -357,7 +376,29 @@ export default function Home({
             </button>
           </div>
         </form>
-        <MobileSearch value={gameUrl} onChange={setGameUrl} onSubmit={() => void launchFromValue(gameUrl)} />
+        <MobileSearch ref={searchDialog} value={gameUrl} onChange={setGameUrl} onSubmit={submitSearch}>
+          {searchQuery && (
+            searchResults.length ? (
+              <ul className="search-results" aria-label={t("searchResults")}>
+                {searchResults.map((game) => (
+                  <li key={game.manifestId}>
+                    <a href={gameLaunchPath(game.manifestUrl)} onClick={(event) => {
+                      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                      event.preventDefault();
+                      searchDialog.current?.close();
+                      onNavigate(gameLaunchPath(game.manifestUrl));
+                    }}>
+                      <span className="search-result-icon">
+                        {game.icon ? <img src={game.icon} alt="" draggable={false} /> : localizeGameName(game, locale).slice(0, 1)}
+                      </span>
+                      <span>{localizeGameName(game, locale)}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="search-empty" role="status">{t("noSearchResults")}</p>
+          )}
+        </MobileSearch>
         <PlayerProfileMenu
           nickname={nickname}
           onNicknameChange={onNicknameChange}

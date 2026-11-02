@@ -4,7 +4,8 @@ import { roomIdFromInput } from "@/features/room/room-code";
 type LaunchInput =
   | { kind: "room"; roomId: string }
   | { kind: "game-link"; path: string }
-  | { kind: "game-source"; url: string };
+  | { kind: "game-source"; url: string }
+  | { kind: "search"; query: string };
 
 export function parseLaunchInput(
   value: string,
@@ -24,8 +25,11 @@ export function parseLaunchInput(
         return { kind: "game-link", path: `${url.pathname}${url.search}` };
       }
     }
+    return { kind: "game-source", url: input };
   } catch {
-    // Other input follows the existing game-source validation path.
+    // Explicit URL schemes still use the source validation/error path.
+    if (/^[a-z][a-z\d+.-]*:/i.test(input))
+      return { kind: "game-source", url: input };
   }
-  return { kind: "game-source", url: input };
+  return { kind: "search", query: input };
 }

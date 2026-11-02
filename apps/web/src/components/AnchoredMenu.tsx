@@ -13,6 +13,7 @@ export interface AnchoredMenuTriggerProps {
   anchorRef: RefObject<HTMLButtonElement | null>;
   expanded: boolean;
   onClick(): void;
+  onOpen(): void;
   onMouseEnter(): void;
   onMouseLeave(): void;
 }
@@ -97,6 +98,14 @@ export default function AnchoredMenu({
     scheduleHoverClose();
   };
 
+  const openFromAnchor = () => {
+    if (disabled) return;
+    openedFromHover.current = false;
+    cancelHoverClose();
+    setAutoFocus(true);
+    setOpen(true);
+  };
+
   const toggleFromAnchor = () => {
     if (disabled) return;
     if (open) {
@@ -107,10 +116,7 @@ export default function AnchoredMenu({
       menu.current?.close();
       return;
     }
-    openedFromHover.current = false;
-    cancelHoverClose();
-    setAutoFocus(true);
-    setOpen(true);
+    openFromAnchor();
   };
 
   useEffect(() => () => window.clearTimeout(hoverCloseTimer.current), []);
@@ -125,6 +131,7 @@ export default function AnchoredMenu({
         anchorRef: anchor,
         expanded: open,
         onClick: toggleFromAnchor,
+        onOpen: openFromAnchor,
         onMouseEnter: openFromHover,
         onMouseLeave: leaveAnchor,
       })}

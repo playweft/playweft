@@ -76,6 +76,7 @@ export default function PlayerProfileMenu({
   const accountAvatar = avatarUrl ? (
     <img
       src={avatarUrl}
+      draggable={false}
       alt=""
       height={36}
       referrerPolicy="no-referrer"
@@ -98,6 +99,7 @@ export default function PlayerProfileMenu({
           anchorRef,
           expanded,
           onClick,
+          onOpen,
           onMouseEnter,
           onMouseLeave,
         }) => (
@@ -110,6 +112,10 @@ export default function PlayerProfileMenu({
             aria-expanded={expanded}
             title={nickname || t("accountMenu")}
             onClick={onClick}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              onOpen();
+            }}
             onMouseEnter={onMouseEnter}
             onMouseLeave={onMouseLeave}
           >

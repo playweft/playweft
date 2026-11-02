@@ -18,7 +18,7 @@ export interface GameViewportPreferences {
   orientation?: GameManifestOrientation;
 }
 
-interface LockableScreenOrientation extends ScreenOrientation {
+interface LockableScreenOrientation extends Omit<ScreenOrientation, "lock"> {
   lock?(orientation: GameManifestOrientation): Promise<void>;
 }
 
@@ -284,7 +284,8 @@ async function enterGameFullscreen(): Promise<boolean> {
   const attempt = (async () => {
     try {
       await requestFullscreen.call(document.documentElement);
-      gameFullscreenOwned = document.fullscreenElement === document.documentElement;
+      gameFullscreenOwned =
+        document.fullscreenElement === document.documentElement;
       return gameFullscreenOwned;
     } catch (error) {
       console.warn("Could not enter fullscreen for game orientation", error);
@@ -672,7 +673,9 @@ export function useGameViewport(
       // Handle each late result independently: one stuck request must not hide
       // another request's completed side effect. Shared promises are deduped.
       const pendingAttempts = new Set([
-        orientationAttempt, pendingGameOrientation, pendingGameFullscreen,
+        orientationAttempt,
+        pendingGameOrientation,
+        pendingGameFullscreen,
       ]);
       for (const attempt of pendingAttempts) {
         if (attempt) void attempt.then(releaseIfCurrent);

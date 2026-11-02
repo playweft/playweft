@@ -148,6 +148,8 @@ p {
 }
 
 .player-profile-button {
+  -webkit-touch-callout: none;
+  user-select: none;
   display: grid;
   width: 40px;
   height: 40px;

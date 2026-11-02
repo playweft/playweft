@@ -70,7 +70,9 @@ function fixture(initial = "/", selectedGame = game, overrides = {}) {
     },
     addEventListener: (_type, listener) => pops.add(listener),
     removeEventListener: (_type, listener) => pops.delete(listener),
-    matchMedia: () => ({ matches: true }), setTimeout, clearTimeout,
+    matchMedia: () => ({ matches: overrides.reducedMotion ?? true }),
+    setTimeout: overrides.setTimeout ?? setTimeout,
+    clearTimeout: overrides.clearTimeout ?? clearTimeout,
   };
   const appRenderer = renderer();
   const mappings = overrides.urlMappings ?? [];
@@ -85,7 +87,7 @@ function fixture(initial = "/", selectedGame = game, overrides = {}) {
     "@/features/game/game-launch-link": links,
     "@/features/room/room-code": { roomIdFromInput: value => value.trim().toUpperCase() === "FZCC" ? "FZCC" : undefined },
     "@/features/library/recent-games": { readRecentGames: () => [], persistRecentGames: () => [], saveRecentGame() {} },
-    "@/platform/platform-api": { getPlatformSession: async () => ({}), createGuestSession: async () => {}, createRoom: overrides.createRoom ?? (async () => ({ roomId: "FZCC" })) },
+    "@/platform/platform-api": { getPlatformSession: overrides.getPlatformSession ?? (async () => ({})), createGuestSession: async () => {}, createRoom: overrides.createRoom ?? (async () => ({ roomId: "FZCC" })) },
   };
   common["@playweft/game-protocol"] = load("../../../packages/game-protocol/src/index.ts", {}, window);
   common["@/platform/json-rpc"] = load("platform/json-rpc.ts", common, window);
@@ -94,7 +96,7 @@ function fixture(initial = "/", selectedGame = game, overrides = {}) {
   common["./launch-input"] = load("features/home/launch-input.ts", common, window);
   const App = load("app/App.tsx", { ...common, react: appRenderer.react,
     "@/app/use-pwa-update": { usePwaUpdate: () => ({}) },
-    "@/features/account/player-profile": { readGuestPlayerNickname: () => "Player" },
+    "@/features/account/player-profile": { readGuestPlayerNickname: () => "Player", readAccountPlayerNickname: (_key, name) => name ?? "Player" },
     "@/features/game/use-game-viewport": { prepareGameOrientation() {} },
   }, window).default;
   function createHome() {
@@ -455,4 +457,84 @@ test('search matches translated names and displays an empty state for no matches
   assert.equal(find(search, 'ul'), undefined);
   assert.equal(find(search, 'p').props.children, 'noSearchResults');
   f.dispose();
+});
+
+
+function animationClock() {
+  let nextId = 0;
+  const timers = new Map();
+  return {
+    reducedMotion: false,
+    timers,
+    setTimeout(callback, duration) { const id = ++nextId; timers.set(id, {callback, duration}); return id; },
+    clearTimeout(id) { timers.delete(id); },
+    finish() { const pending = [...timers.values()]; timers.clear(); pending.forEach(timer => timer.callback()); },
+  };
+}
+
+test('menu exit retains the game for its closing animation and replaces the URL when complete', async () => {
+  for (const embeddedLobby of [false, true]) {
+    const clock = animationClock();
+    const f = fixture('/?game=game.example/demo/&mode=solo', {...game, embeddedLobby}, clock);
+    await f.settle();
+    find(f.tree, 'SoloHost').props.onBack(); await f.settle();
+    assert.equal(find(f.tree, 'SoloHost').props.closing, true);
+    assert.equal(f.window.location.search, '?game=game.example/demo/&mode=solo');
+    assert.equal([...clock.timers.values()][0].duration, 160);
+    clock.finish(); await f.settle();
+    assert.equal(find(f.tree, 'SoloHost'), undefined);
+    assert.equal(f.window.location.pathname + f.window.location.search, '/');
+    assert.equal(f.history.length, 2);
+    f.dispose();
+  }
+});
+
+test('forward navigation cancels a pending game exit instead of later removing the restored game', async () => {
+  const clock = animationClock();
+  const f = fixture('/?game=game.example/demo/&mode=solo', game, clock);
+  await f.settle();
+  await f.back();
+  assert.equal(find(f.tree, 'SoloHost').props.closing, true);
+  await f.forward();
+  assert.equal(clock.timers.size, 0);
+  assert.equal(find(f.tree, 'SoloHost').props.closing, false);
+  clock.finish(); await f.settle();
+  assert.ok(find(f.tree, 'SoloHost'));
+  f.dispose();
+});
+
+
+test('returning home reuses the app account session without another profile request', async () => {
+  const session = {authenticated: true, provider: 'x', accountKey: 'account', name: 'Player', avatarUrl: 'https://images.example/avatar.png'};
+  let requests = 0;
+  const f = fixture('/', {...game, launchMode: 'auto'}, {
+    getPlatformSession: async () => { requests++; return session; },
+  });
+  await f.settle();
+  assert.equal(find(f.home, 'PlayerProfileMenu').props.platformSession, session);
+  find(f.home, 'GameShelf').props.onSelect({...game, launchMode: 'auto'});
+  await f.settle();
+  find(f.tree, 'SoloHost').props.onBack(); await f.settle();
+  assert.equal(requests, 1);
+  assert.equal(find(f.home, 'PlayerProfileMenu').props.platformSession, session);
+  f.dispose();
+});
+
+test('a remounted account menu immediately renders the supplied avatar without fetching a session', () => {
+  const platformSession = {authenticated: true, provider: 'x', name: 'Player', avatarUrl: 'https://images.example/avatar.png'};
+  for (let i = 0; i < 2; i++) {
+    const r = renderer();
+    const window = {location: new URL('https://platform.example/')};
+    const ProfileMenu = load('features/account/PlayerProfileMenu.tsx', {
+      react: r.react,
+      'react/jsx-runtime': {jsx, jsxs: jsx},
+      '@/app/i18n': {useI18n: () => ({t: key => key})},
+      '@/platform/platform-api': {getPlatformSession() {throw new Error('menu must not fetch its own session');}},
+    }, window).default;
+    const tree = r.render(ProfileMenu, {platformSession, nickname: 'Player', onNicknameChange() {}});
+    const button = find(tree, 'AnchoredMenu').props.trigger({anchorRef: {current: null}, expanded: false});
+    assert.equal(find(button, 'img').props.src, platformSession.avatarUrl);
+    assert.equal(find(button, 'img').props.draggable, false);
+    r.dispose();
+  }
 });

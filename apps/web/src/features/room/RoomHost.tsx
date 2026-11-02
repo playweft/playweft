@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import type { PlatformSessionStatus } from "@/platform/platform-api";
 import ErrorToast from "@/components/ErrorToast";
 import GameViewport from "@/features/game/GameViewport";
 import type { DiscoveredGame } from "@/features/game/game-manifest";
@@ -17,6 +18,7 @@ import RoomDialogs from "./RoomDialogs";
 import RoomPermissions from "./RoomPermissions";
 
 interface RoomHostProps {
+  platformSession?: PlatformSessionStatus;
   identityReady: boolean;
   nickname: string;
   roomId: string;
@@ -88,6 +90,7 @@ export default function RoomHost(props: RoomHostProps) {
     <div className={`room-shell ${gameViewActive ? "room-playing" : ""}`} data-gamepad-view={`room:${controls.phase}`}>
       {!gameViewActive && (
         <RoomHeader
+          platformSession={props.platformSession}
           gameName={controls.gameName}
           nickname={props.nickname}
           onNicknameChange={props.onNicknameChange}

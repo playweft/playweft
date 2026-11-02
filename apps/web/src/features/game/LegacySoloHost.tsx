@@ -88,7 +88,7 @@ export default function SoloHost({
     currentGame.manifestId,
   );
   const windowDialogs = useGameWindowDialogs(gameName, gameOrigin);
-  const gameViewport = useGameViewport(true, currentGame);
+  const gameViewport = useGameViewport(!closing, currentGame);
 
   useEffect(() => {
     setIsFavorite(isFavoriteGame(currentGame));
@@ -273,6 +273,7 @@ export default function SoloHost({
   return (
     <div
       className={`room-shell room-playing solo-host ${closing ? "solo-host-closing" : ""}`}
+      inert={closing || undefined}
     >
       <GameViewport
         infoExpanded={gameInfoOpen}

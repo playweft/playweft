@@ -5,7 +5,6 @@ import Dialog from "@/components/Dialog";
 import SettingsDialog from "@/features/account/SettingsDialog";
 import { useI18n } from "@/app/i18n";
 import {
-  getPlatformSession,
   logoutPlatformSession,
   type PlatformSessionStatus,
   xLoginUrl,
@@ -16,9 +15,11 @@ import {
 } from "@/features/account/player-profile";
 
 export default function PlayerProfileMenu({
+  platformSession: session,
   nickname,
   onNicknameChange,
 }: {
+  platformSession?: PlatformSessionStatus;
   nickname: string;
   onNicknameChange(value: string): void;
 }) {
@@ -26,21 +27,7 @@ export default function PlayerProfileMenu({
   const [nicknameDialogOpen, setNicknameDialogOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(openSettingsFromLocation);
   const [draftNickname, setDraftNickname] = useState(nickname);
-  const [session, setSession] = useState<PlatformSessionStatus>();
   const [avatarFailed, setAvatarFailed] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void getPlatformSession()
-      .then((nextSession) => {
-        if (cancelled) return;
-        setSession(nextSession);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => setAvatarFailed(false), [session?.avatarUrl]);
 

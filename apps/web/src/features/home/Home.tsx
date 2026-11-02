@@ -2,7 +2,7 @@ import SiteBanners from "./SiteBanners";
 import MobileSearch, { type SearchDialogHandle } from "./MobileSearch";
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createGuestSession } from "@/platform/platform-api";
+import { createGuestSession, type PlatformSessionStatus } from "@/platform/platform-api";
 import { useFeaturedGames } from "@/features/library/featured-games";
 import ErrorToast from "@/components/ErrorToast";
 import GameHelpDialog from "@/features/game/GameHelpDialog";
@@ -40,6 +40,7 @@ import {
 } from "@/features/library/recent-games";
 
 interface HomeProps {
+  platformSession?: PlatformSessionStatus;
   externalGameUrl?: string;
   externalGameMode?: string;
   suppressGameShelves: boolean;
@@ -60,6 +61,7 @@ interface LaunchFromValueOptions {
 }
 
 export default function Home({
+  platformSession,
   externalGameUrl,
   externalGameMode,
   suppressGameShelves,
@@ -400,6 +402,7 @@ export default function Home({
           )}
         </MobileSearch>
         <PlayerProfileMenu
+          platformSession={platformSession}
           nickname={nickname}
           onNicknameChange={onNicknameChange}
         />

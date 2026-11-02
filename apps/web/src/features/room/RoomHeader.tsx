@@ -1,12 +1,15 @@
+import type { PlatformSessionStatus } from "@/platform/platform-api";
 import { useI18n } from "@/app/i18n";
 import PlayerProfileMenu from "@/features/account/PlayerProfileMenu";
 
 export default function RoomHeader({
+  platformSession,
   gameName,
   nickname,
   onNicknameChange,
   requestBack,
 }: {
+  platformSession?: PlatformSessionStatus;
   gameName: string;
   nickname: string;
   onNicknameChange(value: string): void;
@@ -28,6 +31,7 @@ export default function RoomHeader({
         {gameName}
       </span>
       <PlayerProfileMenu
+        platformSession={platformSession}
         nickname={nickname}
         onNicknameChange={onNicknameChange}
       />

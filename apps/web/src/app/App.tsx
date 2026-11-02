@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getPlatformSession } from "@/platform/platform-api";
+import { getPlatformSession, type PlatformSessionStatus } from "@/platform/platform-api";
 import EntryOverlay from "@/components/EntryOverlay";
 import Home from "@/features/home/Home";
 import RoomHost from "@/features/room/RoomHost";
@@ -41,7 +41,10 @@ export default function App() {
   // platform identity bootstrap below before mutating room membership.
   const [nickname, setNickname] = useState(readGuestPlayerNickname);
   const [identityReady, setIdentityReady] = useState(false);
-  const identityRef = useRef<{ nickname: string; accountKey?: string }>(undefined);
+  const [platformSession, setPlatformSession] = useState<PlatformSessionStatus>();
+  const identityRef = useRef<{ nickname: string; accountKey?: string }>(
+    undefined,
+  );
   const identityWaiters = useRef<Array<(nickname: string) => void>>([]);
   const accountKeyRef = useRef<string | undefined>(undefined);
   const entryGeneration = useRef(0);
@@ -53,14 +56,35 @@ export default function App() {
   const externalGameMode = gameModeFromExternalLaunch(location);
   // soloGame caches a discovered Manifest; the URL decides which view is active.
   const activeSoloGame =
-    soloGame && (isSoloGameLocation(soloGame, location) || (embeddedRoomId !== undefined && path === `/r/${embeddedRoomId}`))
+    soloGame &&
+    (isSoloGameLocation(soloGame, location) ||
+      (embeddedRoomId !== undefined && path === `/r/${embeddedRoomId}`))
       ? soloGame
       : undefined;
   const visibleSoloGame = soloClosing ? soloGame : activeSoloGame;
   soloGameRef.current = activeSoloGame;
 
+  const retireSoloGame = useCallback((onComplete?: () => void) => {
+    window.clearTimeout(soloExitTimer.current);
+    const finish = () => {
+      soloExitTimer.current = undefined;
+      setSoloGame(undefined);
+      setSoloClosing(false);
+      onComplete?.();
+    };
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      finish();
+      return;
+    }
+    setSoloClosing(true);
+    soloExitTimer.current = window.setTimeout(finish, SOLO_EXIT_DURATION_MS);
+  }, []);
+
   useEffect(() => {
     const onPopState = () => {
+      window.clearTimeout(soloExitTimer.current);
+      soloExitTimer.current = undefined;
+      setSoloClosing(false);
       entryGeneration.current += 1;
       handledExternalGameUrl.current = undefined;
       setEntryStatus(undefined);
@@ -69,24 +93,16 @@ export default function App() {
       if (
         !soloGameRef.current ||
         isSoloGameLocation(soloGameRef.current, nextLocation)
-      ) return;
-      setSoloClosing(true);
-      window.clearTimeout(soloExitTimer.current);
-      const duration = window.matchMedia("(prefers-reduced-motion: reduce)")
-        .matches
-        ? 0
-        : SOLO_EXIT_DURATION_MS;
-      soloExitTimer.current = window.setTimeout(() => {
-        setSoloGame(undefined);
-        setSoloClosing(false);
-      }, duration);
+      )
+        return;
+      retireSoloGame();
     };
     window.addEventListener("popstate", onPopState);
     return () => {
       window.removeEventListener("popstate", onPopState);
       window.clearTimeout(soloExitTimer.current);
     };
-  }, []);
+  }, [retireSoloGame]);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,6 +119,7 @@ export default function App() {
     void getPlatformSession()
       .then((session) => {
         if (cancelled) return;
+        setPlatformSession(session);
         if (session.provider === "x" && session.accountKey) {
           const nextNickname = readAccountPlayerNickname(
             session.accountKey,
@@ -131,39 +148,70 @@ export default function App() {
     return new Promise((resolve) => identityWaiters.current.push(resolve));
   }, []);
 
-  const navigate = useCallback((nextPath: string, replace = false, state: Record<string, unknown> = {}) => {
-    entryGeneration.current += 1;
-    handledExternalGameUrl.current = undefined;
-    setEntryStatus(undefined);
-    window.clearTimeout(soloExitTimer.current);
-    setSoloClosing(false);
-    if (replace) window.history.replaceState(state, "", nextPath);
-    else window.history.pushState(state, "", nextPath);
-    setLocation(readAppLocation());
-  }, []);
-  const enterCreatedRoom = useCallback((roomId: string) => {
-    const game = soloGameRef.current;
-    navigate(`/r/${roomId}`, true, game ? { roomReturn: { roomId, manifestUrl: game.manifestUrl, soloModeOverride: gameLaunchMode(game) === "choose" } } : {});
-    setSoloGame(undefined);
-  }, [navigate]);
-  const changeEmbeddedRoom = useCallback((roomId?: string) => {
-    setEmbeddedRoomId(roomId);
-    const game = soloGameRef.current;
-    if (roomId) navigate(`/r/${roomId}`, true);
-    else if (game) navigate(soloGameLaunchPath(game), true);
-  }, [navigate]);
-  const openSoloGame = useCallback((game: RecentGame) => {
-    void prepareGameOrientation(game.orientation);
-    const nextPath = soloGameLaunchPath(game);
-    if (!isSoloGameLocation(game, readAppLocation())) {
-      navigate(nextPath, Boolean(gameUrlFromExternalLaunch(readAppLocation())));
-    }
-    window.clearTimeout(soloExitTimer.current);
-    setSoloClosing(false);
-    setEmbeddedEntryRoomId(undefined);
-    setEmbeddedRoomId(undefined);
-    setSoloGame(game);
-  }, [navigate]);
+  const navigate = useCallback(
+    (
+      nextPath: string,
+      replace = false,
+      state: Record<string, unknown> = {},
+    ) => {
+      entryGeneration.current += 1;
+      handledExternalGameUrl.current = undefined;
+      setEntryStatus(undefined);
+      window.clearTimeout(soloExitTimer.current);
+      setSoloClosing(false);
+      if (replace) window.history.replaceState(state, "", nextPath);
+      else window.history.pushState(state, "", nextPath);
+      setLocation(readAppLocation());
+    },
+    [],
+  );
+  const enterCreatedRoom = useCallback(
+    (roomId: string) => {
+      const game = soloGameRef.current;
+      navigate(
+        `/r/${roomId}`,
+        true,
+        game
+          ? {
+              roomReturn: {
+                roomId,
+                manifestUrl: game.manifestUrl,
+                soloModeOverride: gameLaunchMode(game) === "choose",
+              },
+            }
+          : {},
+      );
+      setSoloGame(undefined);
+    },
+    [navigate],
+  );
+  const changeEmbeddedRoom = useCallback(
+    (roomId?: string) => {
+      setEmbeddedRoomId(roomId);
+      const game = soloGameRef.current;
+      if (roomId) navigate(`/r/${roomId}`, true);
+      else if (game) navigate(soloGameLaunchPath(game), true);
+    },
+    [navigate],
+  );
+  const openSoloGame = useCallback(
+    (game: RecentGame) => {
+      void prepareGameOrientation(game.orientation);
+      const nextPath = soloGameLaunchPath(game);
+      if (!isSoloGameLocation(game, readAppLocation())) {
+        navigate(
+          nextPath,
+          Boolean(gameUrlFromExternalLaunch(readAppLocation())),
+        );
+      }
+      window.clearTimeout(soloExitTimer.current);
+      setSoloClosing(false);
+      setEmbeddedEntryRoomId(undefined);
+      setEmbeddedRoomId(undefined);
+      setSoloGame(game);
+    },
+    [navigate],
+  );
   const claimExternalGameUrl = useCallback((url: string) => {
     if (handledExternalGameUrl.current === url) return false;
     handledExternalGameUrl.current = url;
@@ -214,10 +262,13 @@ export default function App() {
       <RoomHost
         key={roomId}
         identityReady={identityReady}
+        platformSession={platformSession}
         nickname={nickname}
         roomId={roomId}
-        onBack={() => navigate(roomReturnPath(roomId, window.history.state), true)}
-        onGameDiscovered={game => {
+        onBack={() =>
+          navigate(roomReturnPath(roomId, window.history.state), true)
+        }
+        onGameDiscovered={(game) => {
           saveRecentGame(game);
           if (game.embeddedLobby) {
             setSoloGame(game);
@@ -241,6 +292,7 @@ export default function App() {
           externalGameUrl={visibleSoloGame ? undefined : externalGameUrl}
           externalGameMode={externalGameMode}
           suppressGameShelves={Boolean(externalGameUrl || visibleSoloGame)}
+          platformSession={platformSession}
           nickname={nickname}
           waitForIdentity={waitForIdentity}
           onNavigate={navigate}
@@ -261,7 +313,7 @@ export default function App() {
           onRoomChange={changeEmbeddedRoom}
           initialRoomId={embeddedEntryRoomId}
           nickname={nickname}
-          onBack={() => navigate("/", true)}
+          onBack={() => retireSoloGame(() => navigate("/", true))}
         />
       )}
       {overlayStatus && (

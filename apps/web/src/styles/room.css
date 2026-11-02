@@ -826,6 +826,7 @@ main.room-host {
 .game-frame.is-loaded {
   visibility: visible;
   pointer-events: auto;
+  animation: game-content-in 0.16s ease-out both;
 }
 
 .solo-host {
@@ -834,7 +835,7 @@ main.room-host {
   inset: 0;
   min-height: 0;
   background: var(--game-background-color, #fff);
-  animation: solo-host-in 0.18s ease-out both;
+  animation: solo-host-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .solo-host-closing {
@@ -1027,7 +1028,7 @@ main.room-host {
   }
 }
 
-@keyframes solo-host-in {
+@keyframes game-content-in {
   from {
     opacity: 0;
   }
@@ -1036,12 +1037,25 @@ main.room-host {
   }
 }
 
+@keyframes solo-host-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 @keyframes solo-host-out {
   from {
     opacity: 1;
+    transform: none;
   }
   to {
     opacity: 0;
+    transform: scale(0.96);
   }
 }
 
@@ -1448,7 +1462,8 @@ main.room-host {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .solo-host {
+  .solo-host,
+  .game-frame.is-loaded {
     animation: none;
   }
 }

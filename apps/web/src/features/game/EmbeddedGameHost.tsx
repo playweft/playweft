@@ -42,7 +42,7 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
   const latest = useRef({ ...props, t }); latest.current = { ...props, t };
   const game = loaded?.game ?? props.game;
   const name = localizeGameName(game, locale);
-  const viewport = useGameViewport(true, game);
+  const viewport = useGameViewport(!props.closing, game);
   const controls = useRoomControls(manager?.session, state, props.onBack);
   const roomId = manager?.session?.roomId;
   const platformLobby = !!roomId && state.presence?.phase === "lobby" && !controls.useGameLobby;
@@ -74,7 +74,7 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
   useEffect(() => { void manager?.session?.syncNickname(); }, [manager, props.nickname, state.lifecycle]);
   useEffect(() => { document.title = `${name} | Playweft`; }, [name]);
   useEffect(() => { if (!roomId) controls.showGameLobby(); }, [roomId]);
-  return <div className={`room-shell ${platformLobby ? "" : "room-playing"} solo-host`}>
+  return <div className={`room-shell ${platformLobby ? "" : "room-playing"} solo-host${props.closing ? " solo-host-closing" : ""}`} inert={props.closing || undefined}>
     {platformLobby && roomId && <main className="room-host"><RoomLobby roomId={roomId} controls={controls} /></main>}
     <div style={{ display: platformLobby ? "none" : "contents" }}>
       <GameViewport infoExpanded={info} onOpenInfo={() => setInfo(true)} orientationAction={viewport.orientationAction}

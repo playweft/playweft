@@ -8,6 +8,7 @@ import {
   logoutPlatformSession,
   type PlatformSessionStatus,
   xLoginUrl,
+  oidcLoginUrl,
 } from "@/platform/platform-api";
 import {
   MAX_PLAYER_NICKNAME_LENGTH,
@@ -56,9 +57,8 @@ export default function PlayerProfileMenu({
     }
   };
 
-  const signedInWithX = session?.provider === "x";
-  const avatarUrl =
-    signedInWithX && !avatarFailed ? session.avatarUrl : undefined;
+  const signedIn = session?.provider === "x" || session?.provider === "oidc";
+  const avatarUrl = signedIn && !avatarFailed ? session?.avatarUrl : undefined;
 
   const accountAvatar = avatarUrl ? (
     <img
@@ -121,8 +121,11 @@ export default function PlayerProfileMenu({
                 title={nickname || session?.name || t("nicknameNotSet")}
               >
                 <span>{nickname || session?.name || t("nicknameNotSet")}</span>
-                {signedInWithX && session.username && (
-                  <small>@{session.username} · X</small>
+                {signedIn && session?.username && (
+                  <small>
+                    @{session.username}
+                    {session.provider === "x" ? " · X" : ""}
+                  </small>
                 )}
               </div>
             </div>
@@ -136,7 +139,7 @@ export default function PlayerProfileMenu({
               <span>{t("settings")}</span>
             </button>
             <div className="profile-menu-divider" role="separator" />
-            {signedInWithX ? (
+            {signedIn ? (
               <button
                 type="button"
                 role="menuitem"
@@ -146,14 +149,30 @@ export default function PlayerProfileMenu({
                 <span>{t("signOut")}</span>
               </button>
             ) : (
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => closeMenu(signInWithX)}
-              >
-                <LogIn aria-hidden="true" />
-                <span>{t("signInWithX")}</span>
-              </button>
+              <>
+                {session?.loginProviders?.oidc && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      closeMenu(() => window.location.assign(oidcLoginUrl()))
+                    }
+                  >
+                    <LogIn aria-hidden="true" />
+                    <span>{t("signInWithSso")}</span>
+                  </button>
+                )}
+                {session?.loginProviders?.x && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => closeMenu(signInWithX)}
+                  >
+                    <LogIn aria-hidden="true" />
+                    <span>{t("signInWithX")}</span>
+                  </button>
+                )}
+              </>
             )}
             <button
               type="button"

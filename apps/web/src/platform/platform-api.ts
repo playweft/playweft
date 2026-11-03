@@ -73,9 +73,9 @@ async function responseJson<T>(response: Response): Promise<T> {
       requestId,
       retryable,
       body !== null &&
-      typeof body === "object" &&
-      "code" in body &&
-      typeof body.code === "string"
+        typeof body === "object" &&
+        "code" in body &&
+        typeof body.code === "string"
         ? body.code
         : undefined,
     );
@@ -110,7 +110,8 @@ export interface PlatformSessionStatus {
   accountName?: string;
   avatarUrl?: string;
   name?: string;
-  provider?: "guest" | "x";
+  provider?: "guest" | "x" | "oidc";
+  loginProviders?: { oidc: boolean; x: boolean };
   username?: string;
 }
 
@@ -241,25 +242,50 @@ export function joinRoom(roomId: string): Promise<RoomJoin> {
   }).then(responseJson<RoomJoin>);
 }
 
-export function startRoom(roomId: string, hostInstanceId?: string): Promise<RoomStart> {
+export function startRoom(
+  roomId: string,
+  hostInstanceId?: string,
+): Promise<RoomStart> {
   return fetch(endpoint(`/api/rooms/${encodeURIComponent(roomId)}/start`), {
     method: "POST",
     credentials: "same-origin",
-    ...(hostInstanceId ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hostInstanceId }) } : {}),
+    ...(hostInstanceId
+      ? {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hostInstanceId }),
+        }
+      : {}),
   }).then(responseJson<RoomStart>);
 }
 
-export function getRoomLocalRuntime(roomId: string, instanceId: string): Promise<import("@playweft/game-protocol").RoomLocalRuntime> {
-  return fetch(endpoint(`/api/rooms/${encodeURIComponent(roomId)}/local-runtime?instanceId=${encodeURIComponent(instanceId)}`), {
-    credentials: "same-origin", cache: "no-store",
-  }).then(responseJson<import("@playweft/game-protocol").RoomLocalRuntime>);
+export function getRoomLocalRuntime(
+  roomId: string,
+  instanceId: string,
+): Promise<import("@playweft/game-protocol").RoomLocalRuntime> {
+  return fetch(
+    endpoint(
+      `/api/rooms/${encodeURIComponent(roomId)}/local-runtime?instanceId=${encodeURIComponent(instanceId)}`,
+    ),
+    {
+      credentials: "same-origin",
+      cache: "no-store",
+    },
+  ).then(responseJson<import("@playweft/game-protocol").RoomLocalRuntime>);
 }
 
-export function setRoomConnectionMode(roomId: string, mode: NonNullable<RoomPresence["connectionMode"]>): Promise<RoomPresence> {
-  return fetch(endpoint(`/api/rooms/${encodeURIComponent(roomId)}/connection-mode`), {
-    method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode }),
-  }).then(responseJson<RoomPresence>);
+export function setRoomConnectionMode(
+  roomId: string,
+  mode: NonNullable<RoomPresence["connectionMode"]>,
+): Promise<RoomPresence> {
+  return fetch(
+    endpoint(`/api/rooms/${encodeURIComponent(roomId)}/connection-mode`),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    },
+  ).then(responseJson<RoomPresence>);
 }
 
 export function leaveRoom(roomId: string): Promise<RoomLeave> {
@@ -349,23 +375,45 @@ export function returnRoomToLobby(roomId: string): Promise<RoomPresence> {
   ).then(responseJson<RoomPresence>);
 }
 
-export type RoomCreateOptions = Partial<RoomConfiguration> & { server?: RoomServer };
+export type RoomCreateOptions = Partial<RoomConfiguration> & {
+  server?: RoomServer;
+};
 
-export interface RoomConfiguration { minPlayers: number; maxPlayers: number; lobby: "platform" | "game" }
-
-export function setRoomConfiguration(roomId: string, configuration: Partial<RoomConfiguration>): Promise<RoomPresence> {
-  return fetch(endpoint(`/api/rooms/${encodeURIComponent(roomId)}/configuration`), {
-    method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-    body: JSON.stringify(configuration),
-  }).then(responseJson<RoomPresence>);
+export interface RoomConfiguration {
+  minPlayers: number;
+  maxPlayers: number;
+  lobby: "platform" | "game";
 }
 
-export function createRoom(manifestUrl: string, configuration?: Partial<RoomConfiguration>, initialization?: RoomInitialization): Promise<CreatedRoom> {
+export function setRoomConfiguration(
+  roomId: string,
+  configuration: Partial<RoomConfiguration>,
+): Promise<RoomPresence> {
+  return fetch(
+    endpoint(`/api/rooms/${encodeURIComponent(roomId)}/configuration`),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(configuration),
+    },
+  ).then(responseJson<RoomPresence>);
+}
+
+export function createRoom(
+  manifestUrl: string,
+  configuration?: Partial<RoomConfiguration>,
+  initialization?: RoomInitialization,
+): Promise<CreatedRoom> {
   return fetch(endpoint("/api/rooms"), {
     method: "POST",
     credentials: "same-origin",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ manifestUrl, ...(configuration ? { configuration } : {}), ...(initialization ? { initialization } : {}) }),
+    body: JSON.stringify({
+      manifestUrl,
+      ...(configuration ? { configuration } : {}),
+      ...(initialization ? { initialization } : {}),
+    }),
   }).then(responseJson<CreatedRoom>);
 }
 
@@ -377,10 +425,13 @@ export function getRoomLaunch(roomId: string): Promise<RoomLaunch> {
 }
 
 export function getRoomMembership(roomId: string): Promise<{ selfId: string }> {
-  return fetch(endpoint(`/api/rooms/${encodeURIComponent(roomId)}/membership`), {
-    credentials: "same-origin",
-    cache: "no-store",
-  }).then(responseJson<{ selfId: string }>);
+  return fetch(
+    endpoint(`/api/rooms/${encodeURIComponent(roomId)}/membership`),
+    {
+      credentials: "same-origin",
+      cache: "no-store",
+    },
+  ).then(responseJson<{ selfId: string }>);
 }
 
 export function changeRoomGame(
@@ -428,9 +479,17 @@ export function issueProfileAvatar(
   }).then(responseJson<IssuedProfileAvatar>);
 }
 
+export function oidcLoginUrl(): string {
+  return loginUrl("oidc");
+}
+
 export function xLoginUrl(): string {
+  return loginUrl("x");
+}
+
+function loginUrl(provider: "oidc" | "x"): string {
   const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  const url = endpoint("/api/auth/x/start");
+  const url = endpoint(`/api/auth/${provider}/start`);
   url.searchParams.set("return_to", returnTo);
   return url.toString();
 }

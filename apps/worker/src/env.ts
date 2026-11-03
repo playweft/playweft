@@ -6,6 +6,9 @@ export interface Env {
   AUTH_SECRET?: string;
   CLOUDFLARE_OAUTH_CLIENT_ID?: string;
   CLOUDFLARE_OAUTH_CLIENT_SECRET?: string;
+  OIDC_ISSUER_URL?: string;
+  OIDC_CLIENT_ID?: string;
+  OIDC_CLIENT_SECRET?: string;
   X_CLIENT_ID?: string;
   X_CLIENT_SECRET?: string;
   ROOM_ID_FORMAT?: string;

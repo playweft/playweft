@@ -261,8 +261,12 @@ export class RoomSession {
   chooseSeat(seat: number | null): Promise<boolean> {
     return this.updatePresence(() => this.api.setRoomSeat(this.roomId, seat));
   }
-  setConfiguration(configuration: Partial<PlatformApi.RoomConfiguration>): Promise<boolean> {
-    return this.updatePresence(() => this.api.setRoomConfiguration(this.roomId, configuration));
+  setConfiguration(
+    configuration: Partial<PlatformApi.RoomConfiguration>,
+  ): Promise<boolean> {
+    return this.updatePresence(() =>
+      this.api.setRoomConfiguration(this.roomId, configuration),
+    );
   }
   setReady(ready?: boolean): Promise<boolean> {
     const player = this.state.presence?.players.find(
@@ -510,7 +514,10 @@ export class RoomSession {
     }
   }
 
-  private async loadGame(manifestUrl: string, initialization?: PlatformApi.RoomInitialization): Promise<void> {
+  private async loadGame(
+    manifestUrl: string,
+    initialization?: PlatformApi.RoomInitialization,
+  ): Promise<void> {
     const generation = ++this.generation;
     this.cancelActions("GAME_CHANGED", "The room game was changed");
     this.disposeLocalRoom();
@@ -527,11 +534,16 @@ export class RoomSession {
     });
     try {
       const discovered = await this.api.loadGameManifest(manifestUrl);
-      const loadedGame = initialization ? {
-        ...discovered,
-        game: { ...discovered.game, embeddedLobby: true },
-        room: { ...initialization, liveRoom: initialization.liveRoom === true },
-      } : discovered;
+      const loadedGame = initialization
+        ? {
+            ...discovered,
+            game: { ...discovered.game, embeddedLobby: true },
+            room: {
+              ...initialization,
+              liveRoom: initialization.liveRoom === true,
+            },
+          }
+        : discovered;
       if (!this.isCurrent(generation)) return;
       if (!loadedGame.room)
         throw new Error("The game Manifest does not declare room mode");
@@ -580,7 +592,14 @@ export class RoomSession {
         ...(presence.phase === "lobby"
           ? {
               snapshot: undefined,
-              gameRevision: this.state.gameRevision + (returnedToLobby && !this.state.loadedGame?.game.embeddedLobby && !this.state.loadedGame?.manifest?.room && this.state.loadedGame?.manifest?.modes.room?.lobby !== "game" ? 1 : 0),
+              gameRevision:
+                this.state.gameRevision +
+                (returnedToLobby &&
+                !this.state.loadedGame?.game.embeddedLobby &&
+                !this.state.loadedGame?.manifest?.room &&
+                this.state.loadedGame?.manifest?.modes.room?.lobby !== "game"
+                  ? 1
+                  : 0),
             }
           : {}),
       });
@@ -681,7 +700,7 @@ export class RoomSession {
       if (!this.isCurrent(generation)) return;
       const presence = await this.api.setRoomProfileAvatarSharing(
         this.roomId,
-        session.provider === "x" && Boolean(session.avatarUrl),
+        session.provider !== "guest" && Boolean(session.avatarUrl),
       );
       if (this.isCurrent(generation)) this.applyPresence(presence);
     } catch (reason) {

@@ -11,6 +11,7 @@ import {
 } from "./platform-session";
 import { generateRoomId, roomIdMaxAttempts } from "./room-id";
 import { finishXOAuth, startXOAuth } from "./x-oauth";
+import { finishOidcLogin, oidcClientMetadata, startOidcLogin } from "./oidc";
 import {
   cloudflareAccounts,
   CloudflareConnectionError,
@@ -39,7 +40,10 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/platform/guest") {
         return issueGuestSession(request, env);
       }
-      if (request.method === "GET" && url.pathname === "/api/platform/session") {
+      if (
+        request.method === "GET" &&
+        url.pathname === "/api/platform/session"
+      ) {
         return platformSessionStatus(request, env);
       }
       if (
@@ -68,7 +72,10 @@ export default {
         requirePlatformOrigin(request);
         return await promptCloudflareLanguageModel(request, env);
       }
-      if (request.method === "POST" && url.pathname === "/api/platform/logout") {
+      if (
+        request.method === "POST" &&
+        url.pathname === "/api/platform/logout"
+      ) {
         return clearPlatformSession(request);
       }
       if (
@@ -76,6 +83,21 @@ export default {
         url.pathname === "/api/platform/profile/avatar"
       ) {
         return issueProfileAvatar(request, env);
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname === "/api/auth/oidc/client.json"
+      ) {
+        return oidcClientMetadata(request, env);
+      }
+      if (request.method === "GET" && url.pathname === "/api/auth/oidc/start") {
+        return await startOidcLogin(request, env);
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname === "/api/auth/oidc/callback"
+      ) {
+        return await finishOidcLogin(request, env);
       }
       if (request.method === "GET" && url.pathname === "/api/auth/x/start") {
         return startXOAuth(request, env);
@@ -132,8 +154,7 @@ export default {
             cloudflare: "GET /api/platform/cloudflare",
             cloudflareAccounts: "GET /api/platform/cloudflare/accounts",
             cloudflareAccount: "PUT /api/platform/cloudflare/account",
-            cloudflareLanguageModel:
-              "POST /api/platform/cloudflare/ai/prompt",
+            cloudflareLanguageModel: "POST /api/platform/cloudflare/ai/prompt",
             profileAvatar: "POST /api/platform/profile/avatar",
             logout: "POST /api/platform/logout",
             xLogin: "GET /api/auth/x/start",
@@ -269,7 +290,7 @@ function setForwardedIdentity(
   if (session.name) {
     request.headers.set(PLAYER_NAME_HEADER, encodeURIComponent(session.name));
   }
-  if (includeAvatar && session.provider === "x" && session.avatarUrl) {
+  if (includeAvatar && session.provider !== "guest" && session.avatarUrl) {
     request.headers.set(
       PLAYER_AVATAR_HEADER,
       encodeURIComponent(session.avatarUrl),

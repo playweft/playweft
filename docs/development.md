@@ -12,7 +12,7 @@ npm run dev:web
 ```
 
 `AUTH_SECRET` signs the HttpOnly platform session and must be a Worker secret
-in a real deployment. Without an X account, the platform issues a temporary
+in a real deployment. Without an X or OIDC account, the platform issues a temporary
 guest identity. The UI may copy its browser-local nickname into the signed
 session as an optional display name. Browser-facing
 mutations and WebSocket upgrades must have an `Origin` equal to the Worker

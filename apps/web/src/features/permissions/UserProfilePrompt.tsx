@@ -133,7 +133,7 @@ export function useUserProfileAccess(
             true,
           );
         }
-        if (session.provider !== "x" || !session.avatarUrl) {
+        if (session.provider === "guest" || !session.avatarUrl) {
           busyRef.current = false;
           return baseResult;
         }

@@ -9,7 +9,7 @@ const MAX_ACCOUNT_NAME_LENGTH = 100;
 export interface PlatformSession {
   sub: string;
   exp: number;
-  provider: "guest" | "x";
+  provider: "guest" | "x" | "oidc";
   name?: string;
   accountName?: string;
   avatarUrl?: string;
@@ -18,11 +18,12 @@ export interface PlatformSession {
 
 export interface PlatformSessionStatus {
   authenticated: boolean;
+  loginProviders?: { oidc: boolean; x: boolean };
   accountKey?: string;
   accountName?: string;
   avatarUrl?: string;
   name?: string;
-  provider?: "guest" | "x";
+  provider?: "guest" | "x" | "oidc";
   username?: string;
 }
 
@@ -59,7 +60,7 @@ export async function issueGuestSession(
     );
   }
   const sessionTtl =
-    current?.provider === "x"
+    current && current.provider !== "guest"
       ? AUTHENTICATED_SESSION_TTL_SECONDS
       : SESSION_TTL_SECONDS;
   const payload: PlatformSession = {
@@ -88,22 +89,22 @@ export async function platformSessionStatus(
   env: Env,
 ): Promise<Response> {
   const token = readCookie(request.headers.get("Cookie"), COOKIE_NAME);
-  if (!token) return sessionStatusResponse({ authenticated: false });
+  if (!token) return sessionStatusResponse({ authenticated: false }, env);
   const session = await verify(token, requireSecret(env));
   if (!session || session.exp <= Math.floor(Date.now() / 1000)) {
-    return sessionStatusResponse({ authenticated: false });
+    return sessionStatusResponse({ authenticated: false }, env);
   }
   return sessionStatusResponse({
     authenticated: true,
     provider: session.provider,
-    ...(session.provider === "x"
+    ...(session.provider !== "guest"
       ? { accountKey: await accountKey(session.sub, requireSecret(env)) }
       : {}),
     ...(session.accountName ? { accountName: session.accountName } : {}),
     ...(session.avatarUrl ? { avatarUrl: session.avatarUrl } : {}),
     ...(session.name ? { name: session.name } : {}),
     ...(session.username ? { username: session.username } : {}),
-  });
+  }, env);
 }
 
 async function accountKey(subject: string, secret: string): Promise<string> {
@@ -128,12 +129,10 @@ export async function authenticatedSessionCookie(
   env: Env,
   identity: {
     sub: string;
-    provider: "x";
     accountName: string;
-    username: string;
     avatarUrl?: string;
     name?: string;
-  },
+  } & ({ provider: "x"; username: string } | { provider: "oidc"; username?: string }),
 ): Promise<string> {
   const payload: PlatformSession = {
     ...identity,
@@ -248,7 +247,7 @@ async function verify(
     if (
       typeof payload.sub !== "string" ||
       typeof payload.exp !== "number" ||
-      (payload.provider !== "guest" && payload.provider !== "x")
+      (payload.provider !== "guest" && payload.provider !== "x" && payload.provider !== "oidc")
     ) {
       return undefined;
     }
@@ -262,6 +261,7 @@ async function verify(
     const username = accountUsername(payload.username);
     if (payload.username !== undefined && !username) return undefined;
     if (provider === "x" && (!accountName || !username)) return undefined;
+    if (provider === "oidc" && !accountName) return undefined;
     if (
       provider === "guest" &&
       (accountName !== undefined ||
@@ -287,7 +287,7 @@ async function verify(
 function accountDefaultName(
   session: PlatformSession | undefined,
 ): string | undefined {
-  if (session?.provider !== "x" || !session.accountName) return undefined;
+  if (!session || session.provider === "guest" || !session.accountName) return undefined;
   return defaultDisplayName(session.accountName);
 }
 
@@ -347,8 +347,11 @@ function expiredSessionCookie(request: Request): string {
   return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
 }
 
-function sessionStatusResponse(status: PlatformSessionStatus): Response {
-  return Response.json(status, { headers: { "Cache-Control": "no-store" } });
+function sessionStatusResponse(status: PlatformSessionStatus, env: Env): Response {
+  return Response.json({ ...status, loginProviders: {
+    oidc: Boolean(env.OIDC_ISSUER_URL?.trim()),
+    x: Boolean(env.X_CLIENT_ID && env.X_CLIENT_SECRET),
+  } }, { headers: { "Cache-Control": "no-store" } });
 }
 
 function displayName(value: unknown): string | undefined {

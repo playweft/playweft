@@ -22,7 +22,7 @@ export async function issueProfileAvatar(
   requirePlatformOrigin(request);
   const session = await requirePlatformSession(request, env);
   const manifestId = await requestManifestId(request);
-  if (session.provider !== "x" || !session.avatarUrl) {
+  if (session.provider === "guest" || !session.avatarUrl || !isAllowedAvatarSource(new URL(session.avatarUrl))) {
     return noStoreJson({ src: null });
   }
   const expiresAt = Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS;

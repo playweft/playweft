@@ -55,6 +55,69 @@ https://play.example.com/api/auth/x/callback
 The Worker derives this URL from the incoming request origin. The flow uses
 Authorization Code with PKCE and requests only `tweet.read` and `users.read`.
 
+## Optional OpenID Connect login
+
+Configure the Worker runtime variables, not the frontend build environment:
+
+| Variable | Purpose |
+| --- | --- |
+| `OIDC_ISSUER_URL` | Exact OIDC issuer identifier, including its path and trailing slash if present. Not the authorization or discovery endpoint. |
+| `OIDC_CLIENT_ID` | Optional pre-registered client ID. Omit to use CIMD. |
+| `OIDC_CLIENT_SECRET` | Optional secret for a registered confidential client. Requires `OIDC_CLIENT_ID`. Store as a Worker Secret. |
+
+`AUTH_SECRET` is still required for Playweft's own session and temporary login
+transaction cookie. It is independent of `OIDC_CLIENT_SECRET`.
+
+The Worker enables `global_fetch_strictly_public` so an issuer hosted by another
+Worker in the same Cloudflare zone is reached through its public route. Keep this
+flag enabled when deploying the platform. For workers-sso, use the root issuer,
+for example `OIDC_ISSUER_URL=https://auth.example.com`.
+
+With only `OIDC_ISSUER_URL`, Playweft uses a public client with PKCE and publishes
+its client metadata at `https://play.example.com/api/auth/oidc/client.json`.
+This complete URL is the Client ID. Playweft does not store dynamic-registration
+state; the identity provider may cache or persist the discovered client metadata.
+The issuer must advertise `client_id_metadata_document_supported: true` in its
+Discovery document and accept the public client authentication method `none`.
+CIMD follows the OAuth Client ID Metadata Document draft (currently `-02`), not
+a finalized RFC. Unsupported issuers produce an explicit error; Playweft does
+not fall back to dynamic registration. CIMD requires a public HTTPS platform URL.
+
+With `OIDC_CLIENT_ID`, register this exact callback with your identity provider:
+
+```text
+https://play.example.com/api/auth/oidc/callback
+```
+
+Without a client secret, configure a public client with token endpoint
+authentication method `none`. With a secret, Playweft selects
+`client_secret_basic`, or `client_secret_post` if Basic is not advertised and
+Post is supported. All modes use Authorization Code, S256 PKCE, state, nonce,
+and the `openid profile` scopes. Discovery, ID Token signatures and claims,
+and UserInfo subject identity are verified by `oauth4webapi`.
+
+The login button appears in the account menu when `OIDC_ISSUER_URL` is set.
+Existing X login remains available when its credentials are configured.
+Account identity is scoped by the pair `(issuer, sub)`; accounts are not linked
+by matching names or emails. Standard `name`, `preferred_username` and `picture`
+claims populate the platform profile. Game/room avatar proxying retains its
+existing trusted-source restriction; other pictures can appear in the platform
+account menu but are not forwarded to games or rooms.
+
+Only Playweft's local session is retained after login; upstream access tokens
+and refresh tokens are not persisted. Logout ends the Playweft session; it does
+not globally log out the user from the identity provider.
+
+For local development, use a pre-registered client and loopback HTTP callback.
+Put variables in ignored `apps/worker/.dev.vars`; never commit the secret:
+
+```dotenv
+AUTH_SECRET=local-platform-session-secret
+OIDC_ISSUER_URL=https://sso.example.com
+OIDC_CLIENT_ID=playweft-development
+OIDC_CLIENT_SECRET=development-secret-if-required
+```
+
 ## Room codes
 
 Room ID generation is optional to configure. By default, the Worker uses

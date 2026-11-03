@@ -120,7 +120,7 @@ export default function App() {
       .then((session) => {
         if (cancelled) return;
         setPlatformSession(session);
-        if (session.provider === "x" && session.accountKey) {
+        if (session.provider !== "guest" && session.accountKey) {
           const nextNickname = readAccountPlayerNickname(
             session.accountKey,
             session.name ?? session.accountName,

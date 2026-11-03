@@ -11,7 +11,8 @@
   "dependencies": {
     "@playweft/game-protocol": "file:../../packages/game-protocol",
     "@playweft/runtime-core": "file:../../packages/runtime-core",
-    "@playweft/runtime-lua": "file:../../packages/runtime-lua"
+    "@playweft/runtime-lua": "file:../../packages/runtime-lua",
+    "oauth4webapi": "3.8.8"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260719.1",

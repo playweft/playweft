@@ -15,6 +15,10 @@ These endpoints are used by the trusted platform client. Games should use the
 | `POST /api/rooms/:roomId/kick` | Room-host-only lobby action with `{ playerId }`. |
 | `POST /api/rooms/:roomId/dissolve` | Room-host-only lobby action that closes the room for everyone and invalidates its invite link. |
 | `POST /api/rooms/:roomId/start` | Room-host-only action; locks the seated roster and calls Lua `setup({ protocolVersion, match, players })`. |
+| `GET /api/platform/session` | Read the current session and configured login providers. |
+| `GET /api/auth/oidc/start` | Start OIDC login; optional same-origin `return_to` path. |
+| `GET /api/auth/oidc/callback` | Validate the authorization response and establish the platform session. |
+| `GET /api/auth/oidc/client.json` | Public CIMD metadata when no registered Client ID is configured. |
 | `POST /api/platform/guest` | Platform-only demo bootstrap; sets an HttpOnly guest session and accepts `{ name: string | null }`. |
 | `GET /api/rooms/:roomId/state` | Read persisted state; requires a platform session. |
 | `POST /api/rooms/:roomId/actions` | Submit `{ requestId, action }`; player identity comes from the platform session and `requestId` makes retries idempotent. |

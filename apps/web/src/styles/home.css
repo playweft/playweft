@@ -78,7 +78,7 @@
 }
 
 .launch-submit:hover:not(:disabled),
-.launch-submit:focus-visible {
+.launch-submit:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   background: rgb(82 100 85 / 12%);
 }
 
@@ -326,7 +326,7 @@
 }
 
 .launch-choice-menu button:hover,
-.launch-choice-menu button:focus-visible {
+.launch-choice-menu button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   background: #f1f3f4;
   outline: 0;
 }
@@ -383,7 +383,7 @@
 }
 
 .launch-choice-join-actions button:hover,
-.launch-choice-join-actions button:focus-visible {
+.launch-choice-join-actions button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   background: #f1f3f4;
   outline: 0;
 }
@@ -540,7 +540,7 @@
   object-fit: cover;
 }
 
-.site-banner:focus-visible {
+.site-banner:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   outline: 3px solid currentColor;
   outline-offset: -3px;
 }
@@ -633,7 +633,7 @@
 }
 
 .search-results a:hover,
-.search-results a:focus-visible {
+.search-results a:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   background: #f1f3f4;
 }
 
@@ -789,7 +789,7 @@
     cursor: pointer;
   }
 
-  .mobile-search-trigger:focus-visible {
+  .mobile-search-trigger:is(:focus-visible, :where(.gamepad-navigation) :focus) {
     background: #e4ebe4;
   }
 }

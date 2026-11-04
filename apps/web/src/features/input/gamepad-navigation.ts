@@ -18,7 +18,18 @@ export function navigationScope(): HTMLElement {
     .filter(element => element.getClientRects().length > 0).at(-1) ?? root;
 }
 
-export function startGamepadNavigation(onActivity: (active: boolean) => void): () => void {
+export interface GamepadHints {
+  container: HTMLElement;
+  playing: boolean;
+  options: boolean;
+  back: boolean;
+  editing: boolean;
+}
+
+export function startGamepadNavigation(
+  onActivity?: (active: boolean) => void,
+  onHints?: (hints: GamepadHints) => void,
+): () => void {
   const input = new GamepadInput();
   let frame = 0;
   let active = false;
@@ -31,6 +42,8 @@ export function startGamepadNavigation(onActivity: (active: boolean) => void): (
   let previousView: HTMLElement | undefined;
   let previousViewState: string | undefined;
   let previousGameFrame: Element | null = null;
+  let previousHints: GamepadHints | undefined;
+  let focusedGameFrame: HTMLElement | undefined;
 
   const focus = (element: HTMLElement) => {
     element.focus({ preventScroll: true });
@@ -41,10 +54,10 @@ export function startGamepadNavigation(onActivity: (active: boolean) => void): (
     if (active === next) return;
     active = next;
     document.documentElement.classList.toggle("gamepad-navigation", next);
-    onActivity(next);
+    onActivity?.(next);
   };
   const pointer = () => { editing = undefined; setActive(false); };
-  const reset = () => { input.reset(); editing = undefined; };
+  const reset = () => { input.reset(); editing = undefined; focusedGameFrame = undefined; };
   const closeScope = (scope: HTMLElement) => {
     editing = undefined;
     if (scope.matches('dialog[open]')) {
@@ -104,6 +117,18 @@ export function startGamepadNavigation(onActivity: (active: boolean) => void): (
         current.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }));
       }
     } else if (action === "up" || action === "down" || action === "left" || action === "right") {
+      // A sticky header can be closer on screen than the preceding offscreen
+      // row. Traverse the library before considering controls outside it.
+      const library = current.closest('[data-gamepad-library]');
+      if (library && (action === "up" || action === "down")) {
+        const cards = candidates.filter(element => library.contains(element));
+        const currentIndex = cards.indexOf(current);
+        const next = findNextFocus(cards.map(element => element.getBoundingClientRect()), currentIndex, action);
+        if (next >= 0 && next !== currentIndex) {
+          focus(cards[next]);
+          return;
+        }
+      }
       const index = findNextFocus(candidates.map(element => element.getBoundingClientRect()), candidates.indexOf(current), action);
       if (index >= 0) focus(candidates[index]);
     }
@@ -113,10 +138,11 @@ export function startGamepadNavigation(onActivity: (active: boolean) => void): (
     if (document.visibilityState !== "visible" || !document.hasFocus()) { reset(); return; }
     let pads: (Gamepad | null)[];
     try { pads = Array.from(navigator.getGamepads?.() ?? []); } catch { reset(); return; }
+    if (!pads.some(pad => pad?.connected && pad.mapping === "standard")) setActive(false);
     const scope = navigationScope();
     const view = Array.from(document.querySelectorAll<HTMLElement>('[data-gamepad-view]'))
       .filter(element => !element.closest('[inert], [hidden], [aria-hidden="true"]') && element.getClientRects().length > 0).at(-1);
-    const gameFrame = document.querySelector('.game-frame');
+    const gameFrame = document.querySelector<HTMLElement>('.game-frame');
     if (scope !== previousScope || view !== previousView || view?.dataset.gamepadView !== previousViewState || gameFrame !== previousGameFrame) {
       // A new modal/view must never inherit a held movement or confirmation.
       // Baseline the current buttons; release/repress starts a fresh hold.
@@ -133,6 +159,16 @@ export function startGamepadNavigation(onActivity: (active: boolean) => void): (
       previousScope = scope;
       editing = undefined;
     }
+    // Hand off once the loaded game is actually available, and again after a
+    // platform modal/lobby/gate closes. Do not refocus every frame: the game
+    // must be free to manage its own input focus.
+    const playableFrame = scope === document.body && gameFrame?.matches('.is-loaded') &&
+      isNavigable(gameFrame) && !document.querySelector('.game-orientation-gate')
+      ? gameFrame : undefined;
+    if (playableFrame && playableFrame !== focusedGameFrame) {
+      playableFrame.focus({ preventScroll: true });
+    }
+    focusedGameFrame = playableFrame;
     const gameRunning = Boolean(gameFrame);
     if (active && gameWasRunning && !gameRunning && scope === document.body && lastCard) {
       const card = Array.from(document.querySelectorAll<HTMLElement>('[data-gamepad-focus-id]')).find(element => element.dataset.gamepadFocusId === lastCard && isNavigable(element));
@@ -152,6 +188,21 @@ export function startGamepadNavigation(onActivity: (active: boolean) => void): (
     }
     previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     if (previousFocus?.dataset.gamepadFocusId) lastCard = previousFocus.dataset.gamepadFocusId;
+    if (onHints) {
+      const currentScope = navigationScope();
+      const container = currentScope.closest<HTMLElement>('dialog[open]') ?? document.body;
+      const hints: GamepadHints = {
+        container,
+        playing: Boolean(document.querySelector('.game-frame')) && currentScope === document.body && !document.querySelector('.game-orientation-gate'),
+        options: Boolean(previousFocus?.matches('[data-gamepad-context]')),
+        back: currentScope !== document.body || Array.from(currentScope.querySelectorAll<HTMLElement>('[data-gamepad-back]')).some(isNavigable),
+        editing: Boolean(editing),
+      };
+      if (!previousHints || Object.keys(hints).some(key => hints[key as keyof GamepadHints] !== previousHints![key as keyof GamepadHints])) {
+        previousHints = hints;
+        onHints(hints);
+      }
+    }
   };
   window.addEventListener("pointerdown", pointer, true);
   window.addEventListener("keydown", pointer, true);

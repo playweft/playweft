@@ -5,6 +5,9 @@ share one focus: there is no primary-controller assignment, local account
 switching, or change to room-host/game-player permissions.
 
 - D-pad or left stick moves between controls by their screen positions.
+- Within the game library, up/down traverses game rows (including offscreen
+  rows) before leaving the library. The selected row scrolls below the sticky
+  header; up from the first row can reach the header controls.
 - Bottom face button (A / Cross) confirms; right (B / Circle) goes back.
 - Left face button (X / Square) opens a focused game's options.
 - Press the central Guide / PS / Xbox button to open the platform menu when the
@@ -28,7 +31,20 @@ or leaving/entering the acceleration region restarts the timing. New scopes,
 modals, or views baseline held controls and require release/repress rather than
 carrying input onto another screen. Simultaneous controllers
 are merged into one shared action per animation frame. Pointer and keyboard
-input hide the controller focus styling without changing layout.
+input hide the controller focus styling. Controller focus reuses the existing
+keyboard focus styles. A fixed footer shows short, contextual actions with
+physical face-button positions, without guessing controller-specific letters.
+Its 52 px height (plus safe-area inset) is reserved below page or dialog content;
+only the footer opacity and position animate over 180 ms. Pointer movement does
+not hide it; pointer presses or keyboard input hide it after a 700 ms grace
+period to avoid flicker. The footer is hidden during gameplay and appears inside
+the active modal when a platform dialog is open. Reduced-motion preferences
+remove the transition.
+
+Once the game iframe has loaded and is visible, the platform focuses it without
+scrolling. Closing a platform modal returns focus to the game. Hidden lobby
+frames, orientation gates, closing views and background tabs do not receive
+focus; focus is handed off on transitions rather than forced every frame.
 
 During gameplay ordinary navigation, confirm, and back are not applied to the
 platform. Only the central button or deliberate menu chord is recognized until a

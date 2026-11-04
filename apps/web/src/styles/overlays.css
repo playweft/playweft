@@ -68,7 +68,7 @@
 }
 
 .menu button:hover,
-.menu button:focus-visible {
+.menu button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   background: #f1f4f1;
   outline: 0;
 }
@@ -92,7 +92,7 @@
 }
 
 .menu button.menu-danger:hover,
-.menu button.menu-danger:focus-visible {
+.menu button.menu-danger:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   background: #fbeff1;
 }
 
@@ -246,7 +246,7 @@
 }
 
 .settings-dialog-back:hover,
-.settings-dialog-back:focus-visible {
+.settings-dialog-back:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   background: #ededed;
   color: #202124;
   outline: 0;
@@ -336,7 +336,7 @@
   }
 }
 
-.settings-list-button:focus-visible,
+.settings-list-button:is(:focus-visible, :where(.gamepad-navigation) :focus),
 .settings-list-select:focus-within {
   background: #f0f0f0;
   outline: 0;
@@ -553,7 +553,7 @@
 }
 
 .dialog-header button:hover,
-.dialog-header button:focus-visible {
+.dialog-header button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   background: #f1f3f4;
   color: #202124;
   outline: 0;
@@ -689,7 +689,7 @@
     border-color 0.16s ease;
 }
 
-.dialog-action:focus-visible {
+.dialog-action:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   outline: 0;
   border-color: #aeb7be;
 }
@@ -860,12 +860,12 @@
 }
 
 .update-toast button:hover,
-.update-toast button:focus-visible {
+.update-toast button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   background: rgba(255, 255, 255, 0.13);
   outline: 0;
 }
 
-.update-toast button:focus-visible {
+.update-toast button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   box-shadow: 0 0 0 2px #fff;
 }
 
@@ -1037,7 +1037,7 @@
     color 0.16s ease;
 }
 
-.creating-cancel:focus-visible {
+.creating-cancel:is(:focus-visible, :where(.gamepad-navigation) :focus) {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }

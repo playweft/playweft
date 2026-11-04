@@ -13,7 +13,7 @@ function fixture() {
       this.tagName=tag.toUpperCase(); this.tabIndex=0; this.dataset={}; this.children=[];
       this.parent=null; this.isConnected=true; this.disabled=false; this.hidden=false;
       this.className=''; this.open=false; this.rect={left:0,top:0,right:40,bottom:40,width:40,height:40};
-      this.listeners=new Map(); this.clicks=0; this.scrolls=0; Object.assign(this,options); all.push(this);
+      this.listeners=new Map(); this.clicks=0; this.scrolls=0; this.focuses=0; Object.assign(this,options); all.push(this);
     }
     append(...children) { for (const child of children) {child.parent=this;this.children.push(child);} }
     matches(selector) { return selector.split(',').some(raw=>{
@@ -44,7 +44,7 @@ function fixture() {
     querySelectorAll(s){return this.children.flatMap(c=>[...(c.matches(s)?[c]:[]),...c.querySelectorAll(s)]).filter(c=>c.isConnected);}
     getClientRects(){return this.hidden?[]:[this.rect];}
     getBoundingClientRect(){return this.rect;}
-    focus(){document.activeElement=this;}
+    focus(){this.focuses++;document.activeElement=this;}
     scrollIntoView(){this.scrolls++;}
     click(){this.clicks++;this.dispatchEvent(new Event('click'));}
     addEventListener(type,fn){this.listeners.set(type,fn);}
@@ -59,15 +59,36 @@ function fixture() {
   const pads=[{id:'pad',index:0,connected:true,mapping:'standard',buttons:Array.from({length:17},()=>({pressed:false})),axes:[0,0]}];
   function load(file, requireFn) {const module={exports:{}};const source=readFileSync(new URL('../apps/web/src/features/input/'+file,import.meta.url),'utf8');const {outputText}=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});vm.runInNewContext(outputText,{module,exports:module.exports,require:requireFn,document,window,navigator:{getGamepads:()=>pads},HTMLElement:Element,HTMLSelectElement:Select,Event,MouseEvent:Event,getComputedStyle:()=>({visibility:'visible',display:'block'}),requestAnimationFrame:fn=>(callback=fn,1),cancelAnimationFrame(){}});return module.exports;}
   const input=load('gamepad-input.ts');const adapter=load('gamepad-navigation.ts',()=>input);
-  const activity=[];const stop=adapter.startGamepadNavigation(v=>activity.push(v));
+  const activity=[],hints=[];const stop=adapter.startGamepadNavigation(v=>activity.push(v),v=>hints.push(v));
   const tick=(delta=16)=>{time+=delta;callback(time);};tick();
   const press=(button,pad=0)=>{pads[pad].buttons[button].pressed=true;tick();pads[pad].buttons[button].pressed=false;tick();};
-  return {Element,Select,body,document,pads,activity,stop,tick,press,adapter,listeners,setVisible:v=>visible=v,setFocused:v=>focused=v};
+  return {Element,Select,body,document,pads,activity,hints,stop,tick,press,adapter,listeners,setVisible:v=>visible=v,setFocused:v=>focused=v};
 }
 
 test('first press focuses without activation; shared pads then confirm the same focus',()=>{
   const f=fixture();const a=new f.Element();f.body.append(a);f.press(0);assert.equal(f.document.activeElement,a);assert.equal(a.clicks,0);
   f.pads.push({...f.pads[0],id:'pad2',index:1,buttons:Array.from({length:17},()=>({pressed:false}))});f.tick();f.press(0,1);assert.equal(a.clicks,1);f.stop();
+});
+
+test('scrolled library traverses offscreen rows before the sticky search field',()=>{
+  for (const previousTop of [-160, 20]) {
+    const f=fixture();
+    const rect=(top,height=100)=>({left:0,top,right:100,bottom:top+height,width:100,height});
+    const search=new f.Element('input',{rect:rect(0,60)});
+    const library=new f.Element('div',{tabIndex:-1,dataset:{gamepadLibrary:''}});
+    const previous=new f.Element('a',{rect:rect(previousTop)});
+    const current=new f.Element('a',{rect:rect(140)});
+    library.append(previous,current);f.body.append(search,library);current.focus();
+    f.press(12);
+    assert.equal(f.document.activeElement,previous);
+    assert.equal(previous.scrolls,1);
+    f.press(13);
+    assert.equal(f.document.activeElement,current);
+    // At the actual first row, moving up can leave the library.
+    previous.rect=rect(100);current.rect=rect(240);previous.focus();
+    f.press(12);
+    assert.equal(f.document.activeElement,search);
+  }
 });
 test('modal back dispatches cancel, never invokes background back or confirm',()=>{
   const f=fixture();const background=new f.Element('button',{dataset:{gamepadBack:''}});const dialog=new f.Element('dialog',{open:true,tabIndex:-1});const action=new f.Element();dialog.append(action);f.body.append(background,dialog);let cancels=0;dialog.addEventListener('cancel',()=>cancels++);action.focus();f.tick();f.press(1);assert.equal(cancels,1);assert.equal(background.clicks,0);assert.equal(action.clicks,0);
@@ -128,4 +149,61 @@ test('view replacement and state transitions discard held confirmation and movem
   root.dataset.gamepadView='next-screen';buttons[0].focus();f.pads[0].buttons[0].pressed=true;f.tick();f.tick(1000);assert.equal(f.document.activeElement,buttons[0]);assert.equal(buttons[0].clicks,0);
   root.isConnected=false;f.body.children=[];const next=navigationRow(f,{library:true});f.tick(1000);assert.equal(f.document.activeElement,next.buttons[0]);assert.equal(next.buttons[0].clicks,0);
   f.pads[0].buttons[0].pressed=false;f.pads[0].buttons[15].pressed=false;f.tick();f.press(0);assert.equal(next.buttons[0].clicks,1);
+});
+
+
+test('footer hints follow focused actions, select editing, modal scope and gameplay',()=>{
+  const f=fixture();
+  const card=new f.Element('a',{dataset:{gamepadContext:''}});
+  f.body.append(card);card.focus();f.tick();
+  assert.equal(f.hints.at(-1).container,f.body);
+  assert.equal(f.hints.at(-1).options,true);
+  assert.equal(f.hints.at(-1).back,false);
+  const count=f.hints.length;f.tick();assert.equal(f.hints.length,count);
+  const frame=new f.Element('iframe',{className:'game-frame',tabIndex:-1});
+  f.body.append(frame);f.tick();assert.equal(f.hints.at(-1).playing,true);
+  const dialog=new f.Element('dialog',{open:true,tabIndex:-1});
+  const select=new f.Select();dialog.append(select);f.body.append(dialog);select.focus();f.tick();
+  assert.equal(f.hints.at(-1).container,dialog);
+  assert.equal(f.hints.at(-1).playing,false);
+  assert.equal(f.hints.at(-1).options,false);
+  assert.equal(f.hints.at(-1).back,true);
+  f.press(0);assert.equal(f.hints.at(-1).editing,true);
+  f.press(1);assert.equal(f.hints.at(-1).editing,false);
+  dialog.isConnected=false;f.body.children=f.body.children.filter(e=>e!==dialog);f.tick();
+  assert.equal(f.hints.at(-1).container,f.body);
+  assert.equal(f.hints.at(-1).playing,true);
+});
+
+
+test('loaded visible game receives focus once and regains it after a platform modal closes',()=>{
+  const f=fixture();const card=new f.Element('a');
+  const frame=new f.Element('iframe',{className:'game-frame'});
+  f.body.append(card,frame);card.focus();f.tick();
+  assert.equal(f.document.activeElement,card);
+  frame.className='game-frame is-loaded';f.tick();
+  assert.equal(f.document.activeElement,frame);assert.equal(frame.focuses,1);
+  f.tick();assert.equal(frame.focuses,1);
+  const dialog=new f.Element('dialog',{open:true,tabIndex:-1});
+  const action=new f.Element();dialog.append(action);f.body.append(dialog);action.focus();f.tick();
+  assert.equal(f.document.activeElement,action);
+  dialog.isConnected=false;f.body.children=f.body.children.filter(e=>e!==dialog);f.tick();
+  assert.equal(f.document.activeElement,frame);assert.equal(frame.focuses,2);
+});
+
+test('game focus waits for lobby visibility, orientation gate, closing and background tab',()=>{
+  const f=fixture();const card=new f.Element('a');
+  const shell=new f.Element('div',{tabIndex:-1});
+  const frame=new f.Element('iframe',{className:'game-frame is-loaded',hidden:true});
+  shell.append(frame);f.body.append(card,shell);card.focus();f.tick();
+  assert.equal(frame.focuses,0);
+  frame.hidden=false;
+  const gate=new f.Element('div',{className:'game-orientation-gate',tabIndex:-1});f.body.append(gate);f.tick();
+  assert.equal(frame.focuses,0);
+  gate.isConnected=false;f.body.children=f.body.children.filter(e=>e!==gate);
+  shell.inert=true;f.tick();assert.equal(frame.focuses,0);
+  shell.inert=false;f.setVisible(false);f.tick();assert.equal(frame.focuses,0);
+  f.setVisible(true);f.tick();assert.equal(f.document.activeElement,frame);
+  frame.isConnected=false;f.body.children=[];card.focus();f.tick();
+  assert.equal(f.document.activeElement,card);
 });

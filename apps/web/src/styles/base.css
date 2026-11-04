@@ -73,6 +73,12 @@ button {
   user-select: none;
 }
 
+/* Use the browser focus ring for controls without a custom focus style.
+   Component focus rules below also apply to controller navigation. */
+:where(.gamepad-navigation) :focus {
+  outline: auto;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -172,7 +178,7 @@ p {
 }
 
 .player-profile-button:hover,
-.player-profile-button:focus-visible,
+.player-profile-button:is(:focus-visible, :where(.gamepad-navigation) :focus),
 .player-profile-button[aria-expanded="true"] {
   background: #f1f3f4;
   color: #30363d;

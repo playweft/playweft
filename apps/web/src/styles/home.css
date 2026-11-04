@@ -78,7 +78,7 @@
 }
 
 .launch-submit:hover:not(:disabled),
-.launch-submit:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.launch-submit:is(:focus-visible, .gamepad-focus) {
   background: rgb(82 100 85 / 12%);
 }
 
@@ -325,8 +325,7 @@
   text-align: left;
 }
 
-.launch-choice-menu button:hover,
-.launch-choice-menu button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.launch-choice-menu button:is(:hover, :focus-visible, .gamepad-focus) {
   background: #f1f3f4;
   outline: 0;
 }
@@ -382,8 +381,7 @@
   font-weight: 750;
 }
 
-.launch-choice-join-actions button:hover,
-.launch-choice-join-actions button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.launch-choice-join-actions button:is(:hover, :focus-visible, .gamepad-focus) {
   background: #f1f3f4;
   outline: 0;
 }
@@ -540,7 +538,7 @@
   object-fit: cover;
 }
 
-.site-banner:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.site-banner:is(:focus-visible, .gamepad-focus) {
   outline: 3px solid currentColor;
   outline-offset: -3px;
 }
@@ -632,8 +630,7 @@
   padding: 12px 20px;
 }
 
-.search-results a:hover,
-.search-results a:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.search-results a:is(:hover, :focus-visible, .gamepad-focus) {
   background: #f1f3f4;
 }
 
@@ -671,15 +668,11 @@
   pointer-events: none;
 }
 
-.mobile-search-dialog[open] .mobile-search-background,
-.mobile-search-dialog[open] .mobile-search-content,
-.mobile-search-dialog[open] .mobile-search-close {
+.mobile-search-dialog[open] .mobile-search-fade {
   animation: mobile-search-fade-in 200ms ease-out both;
 }
 
-.mobile-search-dialog-closing[open] .mobile-search-background,
-.mobile-search-dialog-closing[open] .mobile-search-content,
-.mobile-search-dialog-closing[open] .mobile-search-close {
+.mobile-search-dialog-closing[open] .mobile-search-fade {
   animation: mobile-search-fade-out 180ms ease-in both;
 }
 
@@ -689,20 +682,26 @@
   display: flex;
   align-items: center;
   height: 60px;
-  padding: 0 15px;
+  padding: 0 16px;
   border: 0;
 }
 
 .mobile-search-form {
-  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   width: 100%;
   max-width: none;
   margin: 0;
 }
 
+.mobile-search-slot {
+  flex: 1;
+  min-width: 0;
+}
+
 .mobile-search-field {
-  margin-left: 48px;
-  width: calc(100% - 48px);
+  width: 100%;
   padding-right: 5px;
 }
 
@@ -715,13 +714,12 @@
 }
 
 .mobile-search-close {
-  position: absolute;
-  top: 0;
-  left: 0;
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 42px;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  margin-left: -12px;
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -736,14 +734,14 @@
     transform: translateX(var(--search-from-x, 0px));
   }
   to {
-    width: calc(100% - 48px);
+    width: 100%;
     transform: translateX(0);
   }
 }
 
 @keyframes mobile-search-collapse {
   from {
-    width: calc(100% - 48px);
+    width: 100%;
     transform: translateX(0);
   }
   to {
@@ -789,16 +787,13 @@
     cursor: pointer;
   }
 
-  .mobile-search-trigger:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+  .mobile-search-trigger:is(:focus-visible, .gamepad-focus) {
     background: #e4ebe4;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mobile-search-dialog[open] .mobile-search-field,
-  .mobile-search-dialog[open] .mobile-search-background,
-  .mobile-search-dialog[open] .mobile-search-content,
-  .mobile-search-dialog[open] .mobile-search-close {
+  .mobile-search-dialog[open] :is(.mobile-search-field, .mobile-search-fade) {
     animation: none;
   }
 }

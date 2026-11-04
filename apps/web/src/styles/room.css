@@ -129,7 +129,7 @@
   color: var(--color-primary-hover);
 }
 
-.room-id-action:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.room-id-action:is(:focus-visible, .gamepad-focus) {
   outline: 2px solid currentColor;
   outline-offset: 1px;
 }
@@ -201,8 +201,7 @@
   height: 22px;
 }
 
-.room-id-control:hover,
-.room-id-control:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.room-id-control:is(:hover, :focus-visible, .gamepad-focus) {
   background: #f1f3f4;
   outline: 0;
 }
@@ -444,7 +443,7 @@ main.room-host {
   background: transparent;
 }
 
-.player-card:has(.player-card-action:is(:focus-visible, :where(.gamepad-navigation) :focus)) {
+.player-card:has(.player-card-action:is(:focus-visible, .gamepad-focus)) {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
@@ -625,8 +624,7 @@ main.room-host {
   height: 16px;
 }
 
-.player-menu-toggle:hover,
-.player-menu-toggle:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.player-menu-toggle:is(:hover, :focus-visible, .gamepad-focus) {
   border-color: #bfc7cd;
   background: #f4f6f7;
   color: #30363d;
@@ -673,8 +671,7 @@ main.room-host {
   text-align: left;
 }
 
-.player-menu button:hover,
-.player-menu button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.player-menu button:is(:hover, :focus-visible, .gamepad-focus) {
   background: #f1f4f1;
   outline: 0;
 }
@@ -683,8 +680,8 @@ main.room-host {
   color: #b23b48;
 }
 
-.player-menu button.player-menu-remove:hover,
-.player-menu button.player-menu-remove:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.player-menu
+  button.player-menu-remove:is(:hover, :focus-visible, .gamepad-focus) {
   background: #fbeff1;
 }
 
@@ -796,7 +793,7 @@ main.room-host {
     color 0.16s ease;
 }
 
-.room-actions .cancel-ready:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.room-actions .cancel-ready:is(:focus-visible, .gamepad-focus) {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
@@ -835,7 +832,7 @@ main.room-host {
   inset: 0;
   min-height: 0;
   background: var(--game-background-color, #fff);
-  animation: solo-host-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: solo-host-in 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .solo-host-closing {
@@ -1013,7 +1010,7 @@ main.room-host {
   transform: rotate(90deg);
 }
 
-.game-orientation-enter:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.game-orientation-enter:is(:focus-visible, .gamepad-focus) {
   outline: 3px solid rgba(255, 255, 255, 0.9);
   outline-offset: 3px;
 }
@@ -1080,8 +1077,7 @@ main.room-host {
     backdrop-filter 0.16s ease;
 }
 
-.platform-menu-button:hover,
-.platform-menu-button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.platform-menu-button:is(:hover, :focus-visible, .gamepad-focus) {
   background: rgba(224, 224, 224, 0.24);
   backdrop-filter: blur(3px);
   outline: 0;
@@ -1173,8 +1169,7 @@ main.room-host {
   color: #5e666d;
 }
 
-.game-info-header button:hover,
-.game-info-header button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.game-info-header button:is(:hover, :focus-visible, .gamepad-focus) {
   background: #ededed;
   color: #202124;
   outline: 0;
@@ -1184,8 +1179,8 @@ main.room-host {
   color: #b23b48;
 }
 
-.game-info-header button.game-info-header-exit:hover,
-.game-info-header button.game-info-header-exit:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.game-info-header
+  button.game-info-header-exit:is(:hover, :focus-visible, .gamepad-focus) {
   background: rgba(178, 59, 72, 0.1);
   color: #982e39;
 }
@@ -1300,11 +1295,13 @@ main.room-host {
   white-space: nowrap;
 }
 
-.game-info-quick-actions button:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.game-info-quick-actions button:is(:focus-visible, .gamepad-focus) {
   outline: 0;
 }
 
-.game-info-quick-actions button:is(:focus-visible, :where(.gamepad-navigation) :focus) .game-info-quick-action-icon {
+.game-info-quick-actions
+  button:is(:focus-visible, .gamepad-focus)
+  .game-info-quick-action-icon {
   outline: 2px solid #6c7378;
   outline-offset: 2px;
 }
@@ -1373,8 +1370,8 @@ main.room-host {
   font-size: 0.72rem;
 }
 
-.game-info-url:is(:focus-visible, :where(.gamepad-navigation) :focus) .game-info-url-tooltip,
-.game-info-url[aria-expanded="true"] .game-info-url-tooltip {
+.game-info-url:is(:focus-visible, .gamepad-focus, [aria-expanded="true"])
+  .game-info-url-tooltip {
   opacity: 1;
   transform: translateY(0);
 }
@@ -1386,7 +1383,7 @@ main.room-host {
   }
 }
 
-.game-info-url:is(:focus-visible, :where(.gamepad-navigation) :focus) {
+.game-info-url:is(:focus-visible, .gamepad-focus) {
   outline: 2px solid #6c7378;
   outline-offset: 2px;
 }

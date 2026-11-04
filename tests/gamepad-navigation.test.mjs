@@ -7,13 +7,18 @@ import ts from 'typescript';
 // Minimal DOM fixture exercises the adapter independently of a physical pad.
 function fixture() {
   let callback, time = 0, visible = true, focused = true;
-  const all = [];
+  const all = [], documentListeners = new Map();
   class Element {
     constructor(tag='button', options={}) {
       this.tagName=tag.toUpperCase(); this.tabIndex=0; this.dataset={}; this.children=[];
       this.parent=null; this.isConnected=true; this.disabled=false; this.hidden=false;
       this.className=''; this.open=false; this.rect={left:0,top:0,right:40,bottom:40,width:40,height:40};
       this.listeners=new Map(); this.clicks=0; this.scrolls=0; this.focuses=0; Object.assign(this,options); all.push(this);
+      this.classList={
+        contains:token=>this.className.split(' ').includes(token),
+        add:token=>{if(!this.classList.contains(token))this.className=[this.className,token].filter(Boolean).join(' ');},
+        remove:token=>{this.className=this.className.split(' ').filter(value=>value!==token).join(' ');},
+      };
     }
     append(...children) { for (const child of children) {child.parent=this;this.children.push(child);} }
     matches(selector) { return selector.split(',').some(raw=>{
@@ -44,7 +49,7 @@ function fixture() {
     querySelectorAll(s){return this.children.flatMap(c=>[...(c.matches(s)?[c]:[]),...c.querySelectorAll(s)]).filter(c=>c.isConnected);}
     getClientRects(){return this.hidden?[]:[this.rect];}
     getBoundingClientRect(){return this.rect;}
-    focus(){this.focuses++;document.activeElement=this;}
+    focus(){this.focuses++;documentListeners.get('focusout')?.();document.activeElement=this;documentListeners.get('focusin')?.();}
     scrollIntoView(){this.scrolls++;}
     click(){this.clicks++;this.dispatchEvent(new Event('click'));}
     addEventListener(type,fn){this.listeners.set(type,fn);}
@@ -54,7 +59,7 @@ function fixture() {
   class Select extends Element {constructor(options){super('select',options);this.options=[{disabled:false},{disabled:false}];this.selectedIndex=0;}}
   const body=new Element('body',{tabIndex:-1});
   const document={body,activeElement:body,documentElement:{classList:{toggle(){},remove(){}}},get visibilityState(){return visible?'visible':'hidden';},hasFocus:()=>focused,
-    querySelectorAll:s=>body.querySelectorAll(s),querySelector:s=>body.querySelectorAll(s)[0]??null,addEventListener(){},removeEventListener(){}};
+    querySelectorAll:s=>body.querySelectorAll(s),querySelector:s=>body.querySelectorAll(s)[0]??null,addEventListener:(t,f)=>documentListeners.set(t,f),removeEventListener:t=>documentListeners.delete(t)};
   const listeners=new Map();const window={addEventListener:(t,f)=>listeners.set(t,f),removeEventListener:t=>listeners.delete(t)};
   const pads=[{id:'pad',index:0,connected:true,mapping:'standard',buttons:Array.from({length:17},()=>({pressed:false})),axes:[0,0]}];
   function load(file, requireFn) {const module={exports:{}};const source=readFileSync(new URL('../apps/web/src/features/input/'+file,import.meta.url),'utf8');const {outputText}=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});vm.runInNewContext(outputText,{module,exports:module.exports,require:requireFn,document,window,navigator:{getGamepads:()=>pads},HTMLElement:Element,HTMLSelectElement:Select,Event,MouseEvent:Event,getComputedStyle:()=>({visibility:'visible',display:'block'}),requestAnimationFrame:fn=>(callback=fn,1),cancelAnimationFrame(){}});return module.exports;}
@@ -206,4 +211,24 @@ test('game focus waits for lobby visibility, orientation gate, closing and backg
   f.setVisible(true);f.tick();assert.equal(f.document.activeElement,frame);
   frame.isConnected=false;f.body.children=[];card.focus();f.tick();
   assert.equal(f.document.activeElement,card);
+});
+
+test('controller focus marker follows focus and clears on other input, blur and cleanup',()=>{
+  const f=fixture();const first=new f.Element();const second=new f.Element();
+  f.body.append(first,second);first.focus();
+  assert.equal(first.classList.contains('gamepad-focus'),false);
+  f.press(0);assert.equal(first.classList.contains('gamepad-focus'),true);
+  second.focus();
+  assert.equal(first.classList.contains('gamepad-focus'),false);
+  assert.equal(second.classList.contains('gamepad-focus'),true);
+  // React may rewrite className while the same control retains focus.
+  second.className='updated';f.tick();assert.equal(second.classList.contains('gamepad-focus'),true);
+  f.listeners.get('pointerdown')();assert.equal(second.classList.contains('gamepad-focus'),false);
+  f.press(0);assert.equal(second.classList.contains('gamepad-focus'),true);
+  f.listeners.get('keydown')();assert.equal(second.classList.contains('gamepad-focus'),false);
+  f.press(0);f.listeners.get('blur')();assert.equal(second.classList.contains('gamepad-focus'),false);
+  f.tick();assert.equal(second.classList.contains('gamepad-focus'),true);
+  f.setVisible(false);f.tick();assert.equal(second.classList.contains('gamepad-focus'),false);
+  f.setVisible(true);f.tick();assert.equal(second.classList.contains('gamepad-focus'),true);
+  f.stop();assert.equal(second.classList.contains('gamepad-focus'),false);
 });

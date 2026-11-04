@@ -19,6 +19,7 @@ export default function MobileSearch({ ref, children, value, onChange, onSubmit 
   const { t } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const fieldSlot = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const closeTimer = useRef<number | undefined>(undefined);
   const [closing, setClosing] = useState(false);
@@ -56,12 +57,12 @@ export default function MobileSearch({ ref, children, value, onChange, onSubmit 
   const open = (from?: HTMLElement) => {
     const element = dialog.current;
     const source = from ?? trigger.current;
-    if (!element || !source || element.open) return;
+    if (!element || !source || !fieldSlot.current || element.open) return;
     const bounds = source.getBoundingClientRect();
     element.style.setProperty("--search-from-width", `${bounds.width}px`);
-    element.style.setProperty("--search-from-x", `${bounds.left - 63}px`);
     setExpandedPlaceholder(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     element.showModal();
+    element.style.setProperty("--search-from-x", `${bounds.left - fieldSlot.current.getBoundingClientRect().left}px`);
     // Keep focus synchronous with the tap so Safari can open its keyboard.
     input.current?.focus({ preventScroll: true });
   };
@@ -81,31 +82,33 @@ export default function MobileSearch({ ref, children, value, onChange, onSubmit 
           if (event.key === "Escape") { event.preventDefault(); close(); }
         }}
         onClick={event => { if (event.target === event.currentTarget) close(); }}>
-        <div className="mobile-search-background" aria-hidden="true" />
+        <div className="mobile-search-background mobile-search-fade" aria-hidden="true" />
         <header className="mobile-search-header">
           <form className="launch-form mobile-search-form" onSubmit={event => {
             event.preventDefault();
             if (onSubmit()) finishClose();
           }}>
-            <label className="sr-only" htmlFor="mobile-game-url">{t("gameUrlOrRoomCode")}</label>
-            <div className="url-input mobile-search-field" onAnimationEnd={event => {
-              if (event.target === event.currentTarget && event.animationName === "mobile-search-expand" && !closing)
-                setExpandedPlaceholder(true);
-            }}>
-              <input ref={input} id="mobile-game-url" type="search" required autoComplete="off" enterKeyHint="go"
-                placeholder={t(expandedPlaceholder ? "gameLinkOrRoomCode" : "search")} value={value}
-                onChange={event => onChange(event.target.value)} />
-              <button className="launch-submit" type="submit" disabled={!value.trim()} aria-label={t("openGameOrRoom")}>
-                <Search size={20} aria-hidden="true" />
-              </button>
-            </div>
-            <button className="mobile-search-close" type="button"
+            <button className="mobile-search-close mobile-search-fade" type="button"
               aria-label={t("back")} onClick={close}>
               <ChevronLeft size={24} aria-hidden="true" />
             </button>
+            <label className="sr-only" htmlFor="mobile-game-url">{t("gameUrlOrRoomCode")}</label>
+            <div ref={fieldSlot} className="mobile-search-slot">
+              <div className="url-input mobile-search-field" onAnimationEnd={event => {
+                if (event.target === event.currentTarget && event.animationName === "mobile-search-expand" && !closing)
+                  setExpandedPlaceholder(true);
+              }}>
+                <input ref={input} id="mobile-game-url" type="search" required autoComplete="off" enterKeyHint="go"
+                  placeholder={t(expandedPlaceholder ? "gameLinkOrRoomCode" : "search")} value={value}
+                  onChange={event => onChange(event.target.value)} />
+                <button className="launch-submit" type="submit" disabled={!value.trim()} aria-label={t("openGameOrRoom")}>
+                  <Search size={20} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
           </form>
         </header>
-        <div className="mobile-search-content">{children}</div>
+        <div className="mobile-search-content mobile-search-fade">{children}</div>
       </dialog>
     </>
   );

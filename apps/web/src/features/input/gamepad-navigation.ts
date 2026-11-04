@@ -44,6 +44,21 @@ export function startGamepadNavigation(
   let previousGameFrame: Element | null = null;
   let previousHints: GamepadHints | undefined;
   let focusedGameFrame: HTMLElement | undefined;
+  let highlightedElement: HTMLElement | undefined;
+
+  const clearHighlight = () => {
+    highlightedElement?.classList.remove("gamepad-focus");
+    highlightedElement = undefined;
+  };
+  const syncHighlight = () => {
+    const element = document.activeElement;
+    const next = active && document.visibilityState === "visible" && document.hasFocus() &&
+      element instanceof HTMLElement && element !== document.body ? element : undefined;
+    if (next === highlightedElement && (!next || next.classList.contains("gamepad-focus"))) return;
+    clearHighlight();
+    next?.classList.add("gamepad-focus");
+    highlightedElement = next;
+  };
 
   const focus = (element: HTMLElement) => {
     element.focus({ preventScroll: true });
@@ -54,10 +69,11 @@ export function startGamepadNavigation(
     if (active === next) return;
     active = next;
     document.documentElement.classList.toggle("gamepad-navigation", next);
+    syncHighlight();
     onActivity?.(next);
   };
   const pointer = () => { editing = undefined; setActive(false); };
-  const reset = () => { input.reset(); editing = undefined; focusedGameFrame = undefined; };
+  const reset = () => { input.reset(); editing = undefined; focusedGameFrame = undefined; clearHighlight(); };
   const closeScope = (scope: HTMLElement) => {
     editing = undefined;
     if (scope.matches('dialog[open]')) {
@@ -187,6 +203,7 @@ export function startGamepadNavigation(
       break;
     }
     previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    syncHighlight();
     if (previousFocus?.dataset.gamepadFocusId) lastCard = previousFocus.dataset.gamepadFocusId;
     if (onHints) {
       const currentScope = navigationScope();
@@ -208,6 +225,8 @@ export function startGamepadNavigation(
   window.addEventListener("keydown", pointer, true);
   window.addEventListener("blur", reset);
   document.addEventListener("visibilitychange", reset);
+  document.addEventListener("focusin", syncHighlight);
+  document.addEventListener("focusout", clearHighlight);
   frame = requestAnimationFrame(tick);
   return () => {
     cancelAnimationFrame(frame);
@@ -215,6 +234,9 @@ export function startGamepadNavigation(
     window.removeEventListener("keydown", pointer, true);
     window.removeEventListener("blur", reset);
     document.removeEventListener("visibilitychange", reset);
+    document.removeEventListener("focusin", syncHighlight);
+    document.removeEventListener("focusout", clearHighlight);
+    clearHighlight();
     document.documentElement.classList.remove("gamepad-navigation");
   };
 }

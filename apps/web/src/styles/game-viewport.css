@@ -14,9 +14,7 @@
   transform-origin: center;
 }
 
-.game-viewport-stage-landscape-compatibility .game-frame,
-.game-viewport-stage-landscape-compatibility .solo-game-surface,
-.game-viewport-stage-landscape-compatibility .solo-loading {
+.game-viewport-stage-landscape-compatibility :is(.game-frame, .solo-game-surface, .solo-loading) {
   position: absolute;
   inset: 0;
   width: 100%;

@@ -1,6 +1,6 @@
 /** Bind to the shared MessagePort; destroy this client before replacing the bridge. */
 export function createRoomClient(port) {
-  let destroyed = false, createPending, latestState;
+  let destroyed = false, latestState;
   const pending = new Map(), stateListeners = new Set(), closedListeners = new Set();
   const closed = () => Object.assign(new Error("The game bridge was closed"), { code: "BRIDGE_CLOSED" });
   function updateState(state, notify) {
@@ -24,8 +24,6 @@ export function createRoomClient(port) {
         code: data.error.data?.code, rpcCode: data.error.code,
         retryable: data.error.data?.retryable === true,
       }));
-    } else if (request.method === "room.create" && !(typeof data.result?.roomId === "string" && data.result.roomId)) {
-      request.reject(new Error("Invalid room.create result"));
     } else {
       updateState(data.result, false);
       request.resolve(data.result);
@@ -35,20 +33,13 @@ export function createRoomClient(port) {
     if (destroyed) return Promise.reject(closed());
     return new Promise((resolve, reject) => {
       const id = crypto.randomUUID();
-      pending.set(id, { method, resolve, reject });
+      pending.set(id, { resolve, reject });
       try { port.postMessage({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) }); }
       catch (error) { pending.delete(id); reject(error); }
     });
   }
   port.addEventListener("message", receive); port.start();
   return {
-    create() {
-      if (destroyed) return Promise.reject(closed());
-      if (createPending) return createPending;
-      createPending = request("room.create");
-      createPending.then(() => { createPending = undefined; }, () => { createPending = undefined; });
-      return createPending;
-    },
     getState: () => request("room.getState"),
     setReady: ready => request("room.setReady", { ready }),
     setSeat: seat => request("room.setSeat", { seat }),

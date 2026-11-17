@@ -177,192 +177,80 @@ test("disabled application caching never falls back to a saved manifest on netwo
       error.cause?.message === "offline",
   );
 });
-function creationFixture(overrides = {}) {
-  const timers = new Map();
-  let sequence = 0;
-  const load = modules({
-    window: {
-      setTimeout: (fn) => {
-        timers.set(++sequence, fn);
-        return sequence;
-      },
-      clearTimeout: (id) => timers.delete(id),
-    },
-  });
-  const { SoloRoomCreation, createGameRoom } = load(
-    "apps/web/src/features/game/room-creation.ts",
-  );
-  const entered = [],
-    calls = [],
-    busy = [];
-  const game = {
-    manifestUrl: "https://game.example/demo/playweft.json",
-    modes: ["solo", "room"],
-  };
-  const api = {
-    createGuestSession: async (name) => calls.push(["guest", name]),
-    createRoom: async (url) => {
-      calls.push(["room", url]);
-      return { roomId: "ROOM", manifestUrl: url };
-    },
-    ...overrides,
-  };
-  const options = {
-    waitForIdentity: async () => "Player",
-    onEnterRoom: (id) => entered.push(id),
-    onPendingChange: (value) => busy.push(value),
-    isCancelled: () => false,
-  };
-  const creator = new SoloRoomCreation(game, options, api);
-  return {
-    creator,
-    createGameRoom,
-    options,
-    api,
-    game,
-    entered,
-    calls,
-    busy,
-    runTimers() {
-      for (const [id, fn] of [...timers]) {
-        timers.delete(id);
-        fn();
-      }
-    },
-  };
-}
 const deferred = () => {
   let resolve;
   const promise = new Promise((yes) => (resolve = yes));
   return { promise, resolve };
 };
-test("concurrent solo RPC calls share one authenticated room and navigate only after an explicit entry", async () => {
-  const f = creationFixture();
-  const first = f.creator.create();
-  assert.equal(first, f.creator.create());
-  const room = await first;
-  assert.deepEqual(f.calls, [
-    ["guest", "Player"],
-    ["room", f.game.manifestUrl],
-  ]);
-  assert.deepEqual(f.entered, []);
-  assert.equal(await f.creator.create(), room);
-  f.creator.enter("wrong");
-  f.runTimers();
-  assert.deepEqual(f.entered, []);
-  f.creator.enter(room.roomId);
-  f.creator.enter(room.roomId);
-  f.runTimers();
-  assert.deepEqual(f.entered, ["ROOM"]);
-  f.creator.dispose();
+test("platform lobby creation from the game list uses the Manifest room mode", async () => {
+  const { createGameRoom } = modules()("apps/web/src/features/game/room-creation.ts");
+  const game = {
+    manifestUrl: "https://game.example/demo/playweft.json",
+    modes: ["solo", "room"],
+  };
+  const room = { roomId: "ROOM", manifestUrl: game.manifestUrl };
+  const calls = [];
+  const api = {
+    createGuestSession: async (name) => calls.push(["guest", name]),
+    createRoom: async (url) => {
+      calls.push(["room", url]);
+      return room;
+    },
+  };
+  const waitForIdentity = async () => "Player";
   await assert.rejects(
-    f.creator.create(),
-    (error) => error.data.code === "ROOM_CREATION_CANCELLED",
-  );
-});
-test("room-only capability checks and identity cancellation stop requests before creating a room", async () => {
-  const f = creationFixture();
-  await assert.rejects(
-    f.createGameRoom(
-      { ...f.game, modes: ["solo"] },
-      f.options.waitForIdentity,
-      () => false,
-      f.api,
-    ),
+    createGameRoom({ ...game, modes: ["solo"] }, waitForIdentity, () => false, api),
     (error) => error.data.code === "ROOM_MODE_UNAVAILABLE",
   );
-  assert.deepEqual(f.calls, []);
-  const identity = deferred();
-  f.options.waitForIdentity = () => identity.promise;
-  const pending = f.creator.create();
-  f.creator.dispose();
-  identity.resolve("Late identity");
   await assert.rejects(
-    pending,
+    createGameRoom(game, waitForIdentity, () => true, api),
     (error) => error.data.code === "ROOM_CREATION_CANCELLED",
   );
-  assert.deepEqual(f.calls, []);
-  f.runTimers();
-  assert.deepEqual(f.entered, []);
+  assert.deepEqual(calls, []);
+
+  assert.equal(await createGameRoom(game, waitForIdentity, () => false, api), room);
+  assert.deepEqual(calls, [["guest", "Player"], ["room", game.manifestUrl]]);
 });
-test("network failures can retry; cancellation and late replies cannot navigate over a newer request", async () => {
-  let attempts = 0;
-  const gate = deferred(),
-    started = deferred();
-  const f = creationFixture({
-    createRoom: async () => {
-      attempts++;
-      if (attempts === 1) throw Error("offline");
-      if (attempts === 2) {
-        started.resolve();
-        return gate.promise;
-      }
-      return { roomId: "NEW" };
-    },
-  });
-  await assert.rejects(
-    f.creator.create(),
-    (error) =>
-      error.message === "offline" &&
-      error.data.code === "ROOM_CREATION_FAILED" &&
-      error.data.retryable,
-  );
-  const old = f.creator.create();
-  const cancelled = assert.rejects(
-    old,
-    (error) => error.data.code === "ROOM_CREATION_CANCELLED",
-  );
-  await started.promise;
-  f.creator.cancel();
-  const latest = await f.creator.create();
-  assert.equal(latest.roomId, "NEW");
-  gate.resolve({ roomId: "OLD" });
-  await cancelled;
-  f.creator.enter("OLD");
-  f.runTimers();
-  assert.deepEqual(f.entered, []);
-  f.creator.enter("NEW");
-  f.runTimers();
-  assert.deepEqual(f.entered, ["NEW"]);
-  f.creator.dispose();
-});
-test("RPC posts a successful response before its navigation hook and never enters on failure or a notification", async () => {
+test("RPC replies to requests and ignores notifications for request-only methods", async () => {
   const load = modules(),
     { dispatchRpcMessage } = load("apps/web/src/platform/json-rpc.ts"),
-    order = [];
-  const port = { postMessage: (message) => order.push(["reply", message]) };
+    replies = [];
+  let calls = 0;
+  const port = { postMessage: (message) => replies.push(message) };
   const handlers = {
-    "room.create": {
-      handle: () => ({ roomId: "ROOM" }),
-      afterReply: (result) => order.push(["enter", result]),
+    "test.createRoom": {
+      handle() {
+        calls++;
+        return { roomId: "ROOM" };
+      },
     },
   };
   await dispatchRpcMessage(
     port,
-    { jsonrpc: "2.0", id: "create", method: "room.create" },
+    { jsonrpc: "2.0", id: "create", method: "test.createRoom" },
     handlers,
   );
-  assert.deepEqual(json(order), [
-    ["reply", { jsonrpc: "2.0", id: "create", result: { roomId: "ROOM" } }],
-    ["enter", { roomId: "ROOM" }],
+  assert.deepEqual(json(replies), [
+    { jsonrpc: "2.0", id: "create", result: { roomId: "ROOM" } },
   ]);
-  order.length = 0;
+  replies.length = 0;
   await dispatchRpcMessage(
     port,
-    { jsonrpc: "2.0", method: "room.create" },
+    { jsonrpc: "2.0", method: "test.createRoom" },
     handlers,
   );
-  assert.deepEqual(order, []);
-  handlers["room.create"].handle = () => {
+  assert.deepEqual(replies, []);
+  assert.equal(calls, 1);
+  handlers["test.createRoom"].handle = () => {
     throw Error("offline");
   };
   await dispatchRpcMessage(
     port,
-    { jsonrpc: "2.0", id: "fail", method: "room.create" },
+    { jsonrpc: "2.0", id: "fail", method: "test.createRoom" },
     handlers,
   );
-  assert.equal(order.length, 1);
-  assert.equal(order[0][1].error.message, "offline");
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].error.message, "offline");
 });
 class Port extends EventTarget {
   messages = [];
@@ -376,36 +264,32 @@ class Port extends EventTarget {
     );
   }
 }
-test("room SDK coalesces duplicate clicks, exposes errors, retries, and cleans up on bridge replacement", async () => {
-  const port = new Port(),
-    room = createRoomClient(port),
-    first = room.create();
-  assert.equal(first, room.create());
-  assert.equal(port.messages.length, 1);
-  assert.equal(port.messages[0].method, "room.create");
+test("room SDK exposes errors and rejects pending requests on bridge replacement", async () => {
+  const port = new Port();
+  const room = createRoomClient(port);
+  const start = room.start();
+  assert.equal(port.messages[0].method, "room.start");
   assert.equal(port.messages[0].params, undefined);
   port.reply({
     id: port.messages[0].id,
     error: {
       code: -32000,
-      message: "No room mode",
-      data: { code: "ROOM_MODE_UNAVAILABLE", retryable: false },
+      message: "Players are not ready",
+      data: { code: "ROOM_NOT_READY", retryable: false },
     },
   });
   await assert.rejects(
-    first,
-    (error) => error.code === "ROOM_MODE_UNAVAILABLE" && !error.retryable,
+    start,
+    (error) => error.code === "ROOM_NOT_READY" && !error.retryable,
   );
-  const second = room.create();
-  port.reply({ id: port.messages[1].id, result: { roomId: "ROOM" } });
-  assert.deepEqual(await second, { roomId: "ROOM" });
-  const pending = room.create();
+  const ready = room.setReady(true);
+  const state = { roomId: "ROOM", revision: 1 };
+  port.reply({ id: port.messages[1].id, result: state });
+  assert.deepEqual(await ready, state);
+  const pending = room.getState();
   room.destroy();
   await assert.rejects(pending, (error) => error.code === "BRIDGE_CLOSED");
-  await assert.rejects(
-    room.create(),
-    (error) => error.code === "BRIDGE_CLOSED",
-  );
+  await assert.rejects(room.getState(), (error) => error.code === "BRIDGE_CLOSED");
 });
 
 test("minimal manifests open directly and declare a room server without modes or player limits", async () => {

@@ -15,8 +15,6 @@ export { PLAYWEFT_BRIDGE_VERSION };
 
 export interface RpcHandler {
   allowNotification?: boolean;
-  /** Internal lifecycle hook for transitions which must reply before navigating. */
-  afterReply?(result: JsonValue): void;
   handle(params: JsonValue | undefined, requestId?: string, signal?: AbortSignal): JsonValue | Promise<JsonValue>;
 }
 
@@ -88,7 +86,6 @@ export async function dispatchRpcMessage(
       );
     }
     postRpcResult(port, normalizedRequestId, result);
-    handler.afterReply?.(result);
   } catch (reason) {
     if (!normalizedRequestId) return;
     const error =

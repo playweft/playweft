@@ -800,9 +800,12 @@ function bridgeHarness(f) {
     render() {
       index = 0;
       callbacksVersion++;
+      const state = (f.manager ?? f.session).getState();
       useRoomGameBridge({
-        session: f.session,
-        state: f.session.getState(),
+        session: f.manager ? undefined : f.session,
+        manager: f.manager,
+        loadedGame: f.manager ? f.loaded : undefined,
+        state: f.manager ? { ...state, gameRevision: 0 } : state,
         frame: ref,
         gameName: "Game",
         nickname: "Player",
@@ -1302,6 +1305,54 @@ function embeddedManagerFixture(overrides={}) {
   const manager=new GameRoomManager(loaded,{waitForIdentity:async()=> 'Player',nickname:()=> 'Player',message:key=>key,onRoomChange:id=>entered.push(id)},f.api);
   return {...f,manager,loaded,entered,created,removed};
 }
+
+test("a solo game with modes.room can create a platform lobby and receive its first match on the same bridge", async () => {
+  const lobby = presence(1, "lobby", { minPlayers: 2, maxPlayers: 4, lobby: "platform" });
+  const f = embeddedManagerFixture({
+    joinRoom: async () => ({ ...lobby, selfId: "self" }),
+    startRoom: async () => ({
+      presence: { ...lobby, revision: 2, phase: "playing" },
+      snapshot: snapshot(),
+    }),
+  });
+  const server = f.loaded.manifest.room.server;
+  delete f.loaded.manifest.room;
+  f.loaded.manifest.modes.room = { server, players: { min: 2, max: 4 } };
+  f.loaded.room = { ...f.loaded.room, minPlayers: 2, maxPlayers: 4, liveRoom: false };
+
+  const hook = bridgeHarness(f);
+  hook.render();
+  const bridge = hook.attachments[0];
+  bridge.connect();
+  try {
+    const handlers = bridge.options.handlers;
+    const context = await handlers["game.initialize"].handle();
+    assert.equal(context.mode, "solo");
+    assert.ok(context.capabilities.includes("rooms.create"));
+    const profile = await handlers["user.getProfile"].handle({ fields: ["avatar"] });
+    assert.equal(profile.name, "Player");
+
+    const room = await handlers["rooms.create"].handle({ lobby: "platform" });
+    assert.equal(room.phase, "lobby");
+    assert.equal(room.lobby, "platform");
+    assert.equal(room.selfId, "self");
+    assert.deepEqual(JSON.parse(JSON.stringify(f.created[0].configuration)), { lobby: "platform" });
+    assert.equal(f.created[0].initialization, f.loaded.room);
+    hook.render();
+    assert.equal(hook.attachments.length, 1);
+
+    assert.equal(await f.manager.session.start(), true);
+    const matchEvents = bridge.messages.filter(({ params }) => params?.phase === "playing");
+    assert.deepEqual(matchEvents.map(({ method }) => method), ["room.stateChanged", "game.state"]);
+    await f.manager.session.leave();
+    assert.ok(bridge.messages.some(({ method }) => method === "room.closed"));
+  } finally {
+    hook.dispose();
+    f.manager.dispose();
+    f.session.dispose();
+  }
+});
+
 test('running game creates and owns a single room, can leave and recreate, and validates joins before membership changes',async()=>{
   const f=embeddedManagerFixture();const first=f.manager.create({minPlayers:3,maxPlayers:4,lobby:'platform'});
   assert.equal(first,f.manager.create());const result=await first;assert.equal(result.roomId,'NEW');

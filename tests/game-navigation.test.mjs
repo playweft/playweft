@@ -603,9 +603,10 @@ test("solo preference bypasses selection for cards and share links, replaces the
   await refreshed.settle();
   assert.ok(find(refreshed.tree, "SoloHost"));
   refreshed.dispose();
-  find(f.tree, "SoloHost").props.onEnterRoom("FZCC");
+  find(f.tree, "SoloHost").props.onRoomChange("FZCC");
   await f.settle();
-  assert.ok(find(f.tree, "RoomHost"));
+  assert.ok(find(f.tree, "SoloHost"));
+  assert.equal(f.window.location.pathname, "/r/FZCC");
   assert.equal(f.history.length, 3);
   await f.back();
   assert.equal(f.window.location.pathname + f.window.location.search, "/");
@@ -703,7 +704,7 @@ test("API-created rooms return to the source game when dissolved or left, includ
   const f = fixture("/?game=game.example/demo/&mode=solo");
   await f.settle();
   const count = f.history.length;
-  find(f.tree, "SoloHost").props.onEnterRoom("FZCC");
+  find(f.tree, "SoloHost").props.onRoomChange("FZCC");
   await f.settle();
   assert.equal(f.window.location.pathname, "/r/FZCC");
   assert.equal(f.history.length, count);
@@ -719,7 +720,7 @@ test("API-created rooms return to the source game when dissolved or left, includ
     fresh.window.location.pathname + fresh.window.location.search,
     f.links.gameLaunchPath(game.manifestUrl, "solo"),
   );
-  find(f.tree, "RoomHost").props.onBack();
+  find(f.tree, "SoloHost").props.onRoomChange();
   await f.settle();
   assert.ok(find(f.tree, "SoloHost"));
   assert.equal(f.history.length, count);
@@ -857,14 +858,15 @@ test("direct games return from API-created rooms without adding a solo override,
   const direct = { ...game, launchMode: "auto" };
   const f = fixture("/?game=game.example/demo/", direct);
   await f.settle();
-  find(f.tree, "SoloHost").props.onEnterRoom("FZCC");
+  find(f.tree, "SoloHost").props.onRoomChange("FZCC");
   await f.settle();
   const fresh = fixture("/r/FZCC", direct, {
     historyState: f.window.history.state,
   });
   await fresh.settle();
+  find(f.tree, "SoloHost").props.onRoomChange();
+  find(fresh.tree, "RoomHost").props.onBack();
   for (const page of [f, fresh]) {
-    find(page.tree, "RoomHost").props.onBack();
     await page.settle();
     assert.ok(find(page.tree, "SoloHost"));
     assert.equal(page.window.location.search, "?game=game.example/demo/");

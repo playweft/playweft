@@ -14,7 +14,6 @@ export interface RoomState {
 }
 export interface RoomClient {
   /** Solo games with room capability: creates a lobby and replaces the solo view. */
-  create(): Promise<{ roomId: string }>;
   /** Lobby methods require the corresponding game.initialize capabilities. */
   getState(): Promise<RoomState>;
   setReady(ready: boolean): Promise<RoomState>;

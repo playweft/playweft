@@ -11,9 +11,12 @@ import { useI18n, localizeGameName, localizeGameDescription } from "@/app/i18n";
 import { initialRoomState } from "@/features/room/RoomSession";
 import { useRoomGameBridge } from "@/features/room/useRoomGameBridge";
 import { useRoomControls } from "@/features/room/useRoomControls";
+import RoomHeader from "@/features/room/RoomHeader";
 import RoomPermissions from "@/features/room/RoomPermissions";
 import RoomLobby from "@/features/room/RoomLobby";
 import RoomDialogs from "@/features/room/RoomDialogs";
+import { RoomGamePanels } from "@/features/room/RoomGameView";
+import type { PlatformSessionStatus } from "@/platform/platform-api";
 import {
   isFavoriteGame,
   toggleFavoriteGame,
@@ -24,6 +27,8 @@ export interface EmbeddedGameHostProps {
   closing: boolean;
   game: DiscoveredGame;
   nickname: string;
+  platformSession?: PlatformSessionStatus;
+  onNicknameChange(value: string): void;
   waitForIdentity(): Promise<string>;
   onRoomChange(roomId?: string): void;
   initialRoomId?: string;
@@ -102,12 +107,23 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
   return (
     <div
       className={`room-shell ${platformLobby ? "" : "room-playing"} solo-host${props.closing ? " solo-host-closing" : ""}`}
+      data-gamepad-view={roomId ? `room:${controls.phase}` : undefined}
       inert={props.closing || undefined}
     >
       {platformLobby && roomId && (
-        <main className="room-host">
-          <RoomLobby roomId={roomId} controls={controls} />
-        </main>
+        <>
+          <RoomHeader
+            platformSession={props.platformSession}
+            gameName={controls.gameName}
+            nickname={props.nickname}
+            onNicknameChange={props.onNicknameChange}
+            requestBack={controls.requestBack}
+          />
+          <main className="room-host">
+            <RoomLobby roomId={roomId} controls={controls} />
+          </main>
+          <RoomGamePanels controls={controls} gameViewport={viewport} />
+        </>
       )}
       <div style={{ display: platformLobby ? "none" : "contents" }}>
         <GameViewport
@@ -133,13 +149,15 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
               <GameLoading name={name} icon={game.icon} />
             )}
           {loaded && !initialEntryPending && !viewport.deferGameLoad && (
-            <GameFrame
-              key={revision}
-              ref={iframe}
-              title={name}
-              src={game.url}
-              onLoad={onFrameLoad}
-            />
+            <div className={`solo-game-surface${frameReady ? " solo-game-surface-ready" : ""}`}>
+              <GameFrame
+                key={revision}
+                ref={iframe}
+                title={name}
+                src={game.url}
+                onLoad={onFrameLoad}
+              />
+            </div>
           )}
         </GameViewport>
       </div>
@@ -183,8 +201,21 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
               ? () => void viewport.enterPreferredOrientation()
               : undefined
           }
+          onEnableLandscapeCompatibility={
+            viewport.showLandscapeCompatibility
+              ? viewport.enableLandscapeCompatibility
+              : undefined
+          }
+          landscapeCompatibilityRotation={viewport.landscapeCompatibilityRotation}
           exitAction={
-            roomId
+            roomId && controls.phase === "playing" && controls.isOwner
+              ? {
+                  label: t("returnToRoom"),
+                  onSelect: () => {
+                    void controls.returnToRoom().then(() => setInfo(false));
+                  },
+                }
+              : roomId
               ? {
                   label: t("leaveRoom"),
                   onSelect: () => {

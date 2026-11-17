@@ -165,32 +165,25 @@ export default function App() {
     },
     [],
   );
-  const enterCreatedRoom = useCallback(
-    (roomId: string) => {
-      const game = soloGameRef.current;
-      navigate(
-        `/r/${roomId}`,
-        true,
-        game
-          ? {
-              roomReturn: {
-                roomId,
-                manifestUrl: game.manifestUrl,
-                soloModeOverride: gameLaunchMode(game) === "choose",
-              },
-            }
-          : {},
-      );
-      setSoloGame(undefined);
-    },
-    [navigate],
-  );
   const changeEmbeddedRoom = useCallback(
     (roomId?: string) => {
       setEmbeddedRoomId(roomId);
       const game = soloGameRef.current;
-      if (roomId) navigate(`/r/${roomId}`, true);
-      else if (game) navigate(soloGameLaunchPath(game), true);
+      if (roomId) {
+        navigate(
+          `/r/${roomId}`,
+          true,
+          game && readAppLocation() !== `/r/${roomId}`
+            ? {
+                roomReturn: {
+                  roomId,
+                  manifestUrl: game.manifestUrl,
+                  soloModeOverride: gameLaunchMode(game) === "choose",
+                },
+              }
+            : window.history.state ?? {},
+        );
+      } else if (game) navigate(soloGameLaunchPath(game), true);
     },
     [navigate],
   );
@@ -309,10 +302,11 @@ export default function App() {
           key={visibleSoloGame.manifestUrl}
           game={visibleSoloGame}
           waitForIdentity={waitForIdentity}
-          onEnterRoom={enterCreatedRoom}
           onRoomChange={changeEmbeddedRoom}
           initialRoomId={embeddedEntryRoomId}
           nickname={nickname}
+          platformSession={platformSession}
+          onNicknameChange={changeNickname}
           onBack={() => retireSoloGame(() => navigate("/", true))}
         />
       )}

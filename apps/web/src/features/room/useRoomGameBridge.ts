@@ -155,6 +155,7 @@ export function useRoomGameBridge({
         (customLobby || currentState().presence?.phase === "playing"))),
       onBeforeConnect() {
         cancelPermissions();
+        manager?.cancelPending();
         (manager?.session ?? session)?.cancelActions(
           "BRIDGE_REPLACED",
           "The game bridge was replaced",
@@ -288,7 +289,7 @@ export function useRoomGameBridge({
             const profile =
               await latest.current.userProfile.requestProfile(fields);
             assertBridgeOpen();
-            if (fields.includes("avatar")) {
+            if (fields.includes("avatar") && currentState().lifecycle === "joined") {
               try {
                 await currentSession().shareAvatar(profile.avatar !== undefined);
               } catch (reason) {

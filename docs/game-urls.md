@@ -22,12 +22,12 @@ the generic URL without a mode. Explicit unsupported modes show an error
 and the available entry choices without loading a game iframe.
 
 Browser Back returns to the page before the game entry. The platform's solo
-exit button and room termination replace the current entry with the homepage.
-Pending entry work is invalidated when the URL changes. A game can create a lobby through `playweft.rooms.create()`; legacy manifests
-with room support also retain the `room.create` compatibility API.
-Successful creation replaces the solo entry with `/r/:roomId`; failures keep
-solo play active. Games using the rooms SDK can retain their iframe while creating or leaving
-a room. Legacy platform-managed room entry initializes a separate room game.
+exit button and rooms opened from the game list or an invitation return to the homepage.
+Pending entry work is invalidated when the URL changes. A game can open the
+platform lobby through `playweft.rooms.create({ lobby: "platform" })`.
+Successful creation replaces the solo entry with `/r/:roomId` and keeps the
+game iframe mounted. Leaving returns the creator to the source game, including
+after a refresh. Failed creation keeps solo play active.
 Solo progress is not automatically copied into a multiplayer match.
 
 Configured [URL aliases](site-configuration.md#url-aliases) replace generated

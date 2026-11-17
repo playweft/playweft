@@ -270,8 +270,10 @@ Joining, refreshing, and WebRTC hosting use that saved runtime contract; no
 participant supplies a server again, and a changed file at the original URL
 does not replace the saved source. `setConfiguration()` cannot change `server`.
 
-If `server` is omitted, the platform uses the Manifest default when one exists;
-otherwise creation rejects with `ROOM_SERVER_REQUIRED`. Plain solo manifests
+If `server` is omitted, the platform uses the Manifest default when one exists.
+Games using the platform lobby can keep `modes.room` for the default server,
+seat limits and room entry from the game list. Creating a room without a
+server descriptor or Manifest default rejects with `ROOM_SERVER_REQUIRED`. Plain solo manifests
 also receive the `rooms.create` and `rooms.join` capabilities. No unused Lua
 runtime or script is loaded just by opening such a game.
 
@@ -303,54 +305,6 @@ JSON-RPC request IDs. Initialize returns `room: null` before joining or the
 current public state after joining; its `mode` describes the state at that time.
 Observe `room.state.phase` for subsequent lobby/match transitions. Existing
 `room.action`, `game.state`, latency and profile APIs continue to work.
-
-### Legacy room creation from solo play
-
-A solo game that also declares `modes.room` receives the `room.create`
-capability in `game.initialize`. Show a multiplayer button only when that
-capability is present.
-
-`room.create` takes no parameters and returns `{ roomId }`. It always creates a
-lobby for the currently loaded game's Manifest and uses the platform identity;
-a game cannot select another Manifest, a player identity, or transfer solo
-state through this call. The platform then replaces the solo URL with
-`/r/:roomId`. Players join and prepare in the lobby; starting the match creates
-a new iframe whose `game.initialize` reports `mode: "room"`. This does not
-change the mode of the running solo iframe or migrate its progress. When this
-API-created room ends (including dissolution or leaving), the creating browser
-returns to the source game's solo entry. The return destination is kept in the
-room history entry and survives a refresh; it is not added to the invitation URL.
-Rooms opened directly from the game list or an invitation retain their normal
-return-to-list behavior.
-
-For an existing JSON-RPC client:
-
-```js
-if (context.capabilities.includes("room.create")) {
-  multiplayerButton.onclick = () => rpcCall("room.create").catch(showRpcError);
-}
-```
-
-Or copy `/sdk/room.js` (and optionally `room.d.ts`) into your game's assets and
-bind it to the established MessagePort, like the language-model client:
-
-```js
-import { createRoomClient } from "./room.js";
-const playweft = { room: createRoomClient(gamePort) };
-multiplayerButton.onclick = () => playweft.room.create().catch(showRpcError);
-// Before replacing the port:
-// playweft.room.destroy();
-```
-
-The response is posted before the platform navigates; the game does not need
-to navigate itself. Concurrent calls share one creation.
-Failures keep the solo game mounted and allow retry. Calls after the solo game
-closes or its bridge is replaced cannot cause a late navigation.
-`ROOM_MODE_UNAVAILABLE` indicates missing room capability;
-`ROOM_CREATION_CANCELLED` indicates an obsolete solo transition.
-`ROOM_CREATION_FAILED` carries the creation error and a `retryable` flag for
-network/server failures. Parameters
-such as a different `manifestUrl` are rejected as invalid.
 
 ## 4. Receive state and submit actions
 

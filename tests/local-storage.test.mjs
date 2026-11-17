@@ -274,14 +274,12 @@ test("SDK close rejects both active and queued requests and unavailable IDB neve
   await assert.rejects(db.getItem(A, "a"), /unavailable/);
 });
 
-test("both platform hosts advertise the storage methods", async () => {
-  for (const path of [
-    "../apps/web/src/features/game/LegacySoloHost.tsx",
-    "../apps/web/src/features/room/useRoomGameBridge.ts",
-  ]) {
-    const source = await readFile(new URL(path, import.meta.url), "utf8");
-    assert.match(source, /\.\.\.LOCAL_STORAGE_CAPABILITIES/);
-    assert.match(source, /\.\.\.createLocalStorageHandlers\(/);
-  }
+test("the shared game bridge advertises the storage methods", async () => {
+  const source = await readFile(
+    new URL("../apps/web/src/features/room/useRoomGameBridge.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /\.\.\.LOCAL_STORAGE_CAPABILITIES/);
+  assert.match(source, /\.\.\.createLocalStorageHandlers\(/);
   assert.equal(LOCAL_STORAGE_CAPABILITIES.length, 6);
 });

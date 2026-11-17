@@ -160,10 +160,9 @@ preserves `launchMode` without changing storage keys or invalidating legacy
 entries. Shared solo-first games replace the generic entry with `mode=solo`;
 room invites and explicit modes take precedence.
 
-`room-creation.ts` owns the authenticated create-room sequence used by Home and
-SoloHost. `SoloRoomCreation` coalesces calls, binds requests to one game, and
-invalidates pending work on exit, refresh or bridge replacement. SoloHost
-advertises `room.create` only when the loaded Manifest includes a room mode.
-The RPC dispatcher posts the result before its internal `afterReply` hook
-schedules navigation. App replaces the solo history entry with the created
-lobby; the game is mounted in room mode only after starting a new match.
+`room-creation.ts` handles creation from the game list for games declaring
+`modes.room`. For `rooms.create` from a running game, `GameRoomManager`
+coalesces concurrent calls, uses the Manifest's server by default and joins
+the creator before replying. App replaces the solo history entry with the
+room URL and leaves the iframe mounted. When the game requests the platform
+lobby, the iframe stays hidden until the match starts.

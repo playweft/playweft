@@ -4,6 +4,7 @@ import ErrorToast from "@/components/ErrorToast";
 import GameFrame, { attachGameBridge } from "@/features/game/GameFrame";
 import GameHelpDialog from "@/features/game/GameHelpDialog";
 import GameInfoPanel from "@/features/game/GameInfoPanel";
+import GameLoading from "@/features/game/GameLoading";
 import GameViewport from "@/features/game/GameViewport";
 import GameWindowDialog, {
   PLATFORM_WINDOW_CAPABILITIES,
@@ -24,7 +25,7 @@ import {
   useUserProfileAccess,
 } from "@/features/permissions/UserProfilePrompt";
 import { isFavoriteGame, toggleFavoriteGame } from "@/features/library/favorite-games";
-import type { DiscoveredGame as RecentGame, LoadedGame } from "@/features/game/game-manifest";
+import type { DiscoveredGame as RecentGame } from "@/features/game/game-manifest";
 import { localizeGameDescription, localizeGameName, useI18n } from "@/app/i18n";
 import {
   PLAYWEFT_BRIDGE_VERSION,
@@ -32,8 +33,7 @@ import {
   rpcPlatformFault,
 } from "@/platform/json-rpc";
 import { SoloRoomCreation } from "./room-creation";
-import { loadGameManifest } from "@/features/game/game-manifest";
-import { useGameViewport } from "@/features/game/use-game-viewport";
+import { useSoloGameLaunch } from "./use-solo-game-launch";
 import { createLocalStorageHandlers, LOCAL_STORAGE_CAPABILITIES } from "./local-storage";
 
 interface SoloHostProps {
@@ -56,18 +56,17 @@ export default function SoloHost({
   const { locale, t } = useI18n();
   const [gameInfoOpen, setGameInfoOpen] = useState(false);
   const [gameHelpOpen, setGameHelpOpen] = useState(false);
-  const [loaded, setLoaded] = useState<LoadedGame>();
-  const [loadError, setLoadError] = useState<string>();
   const roomCreation = useRef<SoloRoomCreation | undefined>(undefined);
   const closingRef = useRef(closing);
   closingRef.current = closing;
-  const [gameRevision, setGameRevision] = useState(0);
-  const [frameReady, setFrameReady] = useState(false);
   const [isFavorite, setIsFavorite] = useState(() => isFavoriteGame(game));
   const iframe = useRef<HTMLIFrameElement>(null);
   const nicknameRef = useRef(nickname);
   nicknameRef.current = nickname;
-  const currentGame = loaded?.game ?? game;
+  const {
+    game: currentGame, loaded, loadError, dismissLoadError, viewport: gameViewport,
+    revision: gameRevision, frameReady, onFrameLoad, refreshFrame,
+  } = useSoloGameLaunch(game, closing);
   const gameName = localizeGameName(currentGame, locale);
   const gameDescription = localizeGameDescription(currentGame, locale);
   const gameOrigin = new URL(currentGame.url).origin;
@@ -88,28 +87,10 @@ export default function SoloHost({
     currentGame.manifestId,
   );
   const windowDialogs = useGameWindowDialogs(gameName, gameOrigin);
-  const gameViewport = useGameViewport(!closing, currentGame);
 
   useEffect(() => {
     setIsFavorite(isFavoriteGame(currentGame));
   }, [currentGame.manifestId]);
-
-  useEffect(() => {
-    if (gameViewport.deferGameLoad) return;
-    let cancelled = false;
-    void loadGameManifest(game.manifestUrl)
-      .then((result) => {
-        if (!cancelled) setLoaded(result);
-      })
-      .catch((reason) => {
-        if (!cancelled) {
-          setLoadError(message(reason, t("unexpectedError")));
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [game.manifestUrl, gameViewport.deferGameLoad, t]);
 
   useEffect(() => {
     document.title = `${gameName} | Playweft`;
@@ -293,31 +274,7 @@ export default function SoloHost({
         }
       >
         {!gameViewport.deferGameLoad && !frameReady && !loadError && (
-          <div
-            className="solo-loading"
-            role="status"
-            aria-label={t("loadingGame")}
-            aria-live="polite"
-          >
-            <div className="solo-loading-game">
-              {currentGame.icon ? (
-                <img
-                  className="solo-loading-icon"
-                  src={currentGame.icon}
-                  alt=""
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <span className="solo-loading-icon solo-loading-icon-fallback">
-                  {gameName.slice(0, 2).toUpperCase()}
-                </span>
-              )}
-              <strong>{gameName}</strong>
-            </div>
-            <div className="solo-loading-progress">
-              <span className="loading-spinner" aria-hidden="true" />
-            </div>
-          </div>
+          <GameLoading name={gameName} icon={currentGame.icon} />
         )}
         {loaded && !gameViewport.deferGameLoad && (
           <div
@@ -328,7 +285,7 @@ export default function SoloHost({
               ref={iframe}
               title={gameName}
               src={loaded.game.url}
-              onLoad={() => setFrameReady(true)}
+              onLoad={onFrameLoad}
             />
           </div>
         )}
@@ -336,7 +293,7 @@ export default function SoloHost({
       {loadError && (
         <ErrorToast
           message={loadError}
-          onDismiss={() => setLoadError(undefined)}
+          onDismiss={dismissLoadError}
         />
       )}
       <ClipboardPrompt
@@ -393,8 +350,7 @@ export default function SoloHost({
             loaded
               ? () => {
                   roomCreation.current?.cancel();
-                  setFrameReady(false);
-                  setGameRevision((revision) => revision + 1);
+                  refreshFrame();
                 }
               : undefined
           }
@@ -415,8 +371,4 @@ export default function SoloHost({
       )}
     </div>
   );
-}
-
-function message(reason: unknown, fallback: string): string {
-  return reason instanceof Error ? reason.message : fallback;
 }

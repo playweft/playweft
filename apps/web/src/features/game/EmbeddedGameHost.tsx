@@ -3,12 +3,9 @@ import GameFrame from "./GameFrame";
 import GameViewport from "./GameViewport";
 import GameInfoPanel from "./GameInfoPanel";
 import GameHelpDialog from "./GameHelpDialog";
-import { useGameViewport } from "./use-game-viewport";
-import {
-  loadGameManifest,
-  type DiscoveredGame,
-  type LoadedGame,
-} from "./game-manifest";
+import GameLoading from "./GameLoading";
+import type { DiscoveredGame } from "./game-manifest";
+import { useSoloGameLaunch } from "./use-solo-game-launch";
 import { GameRoomManager } from "./GameRoomManager";
 import { useI18n, localizeGameName, localizeGameDescription } from "@/app/i18n";
 import { initialRoomState } from "@/features/room/RoomSession";
@@ -38,21 +35,20 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
   const [initialEntryPending, setInitialEntryPending] = useState(
     !!props.initialRoomId,
   );
-  const [frameReady, setFrameReady] = useState(false);
-  const [loaded, setLoaded] = useState<LoadedGame>();
   const [manager, setManager] = useState<GameRoomManager>();
   const [state, setState] = useState(initialRoomState);
-  const [error, setError] = useState<string>();
-  const [revision, setRevision] = useState(0);
+  const [roomError, setRoomError] = useState<string>();
   const [info, setInfo] = useState(false);
   const [help, setHelp] = useState(false);
   const [favorite, setFavorite] = useState(() => isFavoriteGame(props.game));
   const iframe = useRef<HTMLIFrameElement>(null);
   const latest = useRef({ ...props, t });
   latest.current = { ...props, t };
-  const game = loaded?.game ?? props.game;
+  const {
+    game, loaded, loadError, dismissLoadError, viewport, revision, frameReady, onFrameLoad, refreshFrame,
+  } = useSoloGameLaunch(props.game, props.closing);
+  const error = loadError ?? roomError;
   const name = localizeGameName(game, locale);
-  const viewport = useGameViewport(!props.closing, game);
   const controls = useRoomControls(manager?.session, state, props.onBack);
   const roomId = manager?.session?.roomId;
   const platformLobby =
@@ -66,21 +62,6 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
     nickname: props.nickname,
     deferred: viewport.deferGameLoad || props.closing,
   });
-  useEffect(() => {
-    if (viewport.deferGameLoad) return;
-    let cancelled = false;
-    void loadGameManifest(props.game.manifestUrl)
-      .then((value) => {
-        if (!cancelled) setLoaded(value);
-      })
-      .catch((reason) => {
-        if (!cancelled)
-          setError(reason instanceof Error ? reason.message : String(reason));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [props.game.manifestUrl, viewport.deferGameLoad]);
   useEffect(() => {
     if (!loaded) return;
     const current = new GameRoomManager(loaded, {
@@ -97,7 +78,7 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
         .join(latest.current.initialRoomId)
         .catch((reason) => {
           if (cancelled) return;
-          setError(reason instanceof Error ? reason.message : String(reason));
+          setRoomError(reason instanceof Error ? reason.message : String(reason));
           latest.current.onRoomChange();
         })
         .finally(() => {
@@ -149,13 +130,7 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
           {!viewport.deferGameLoad &&
             !error &&
             (!frameReady || initialEntryPending) && (
-              <div
-                className="solo-loading"
-                role="status"
-                aria-label={t("loadingGame")}
-              >
-                <span className="loading-spinner" aria-hidden="true" />
-              </div>
+              <GameLoading name={name} icon={game.icon} />
             )}
           {loaded && !initialEntryPending && !viewport.deferGameLoad && (
             <GameFrame
@@ -163,7 +138,7 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
               ref={iframe}
               title={name}
               src={game.url}
-              onLoad={() => setFrameReady(true)}
+              onLoad={onFrameLoad}
             />
           )}
         </GameViewport>
@@ -173,7 +148,8 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
         <ErrorToast
           message={error ?? state.error!}
           onDismiss={() => {
-            setError(undefined);
+            dismissLoadError();
+            setRoomError(undefined);
             manager?.session?.setError(undefined);
           }}
         />
@@ -198,8 +174,7 @@ export default function EmbeddedGameHost(props: EmbeddedGameHostProps) {
               : undefined
           }
           onRefresh={() => {
-            setFrameReady(false);
-            setRevision((value) => value + 1);
+            refreshFrame();
             setInfo(false);
           }}
           onShowHelp={game.helpUrl ? () => setHelp(true) : undefined}
